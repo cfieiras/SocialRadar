@@ -14,7 +14,7 @@ import {
 import "../style.css"
 
 const GIST_VERSION_URL = "https://gist.githubusercontent.com/cfieiras/a74789aead58df67812f31099ffe7e02/raw/social-radar-version.json"
-const REPO_RELEASES_URL = "https://github.com/cfieiras/ig-growth-auto-bot-clon/releases/latest"
+const REPO_RELEASES_URL = "https://github.com/cfieiras/SocialRadar/releases/latest"
 
 function Dashboard() {
     const [updateStatus, setUpdateStatus] = useState<{ available: boolean, remoteVersion: string }>({ available: false, remoteVersion: "" })

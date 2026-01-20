@@ -1,5 +1,5 @@
 {
-  "name": "ig-growth-auto-bot-clon",
+  "name": "social-radar",
   "displayName": "SocialRadar",
   "version": "1.1.5",
   "description": "Automated IG growth tool with human-like interactions",
@@ -36,7 +36,7 @@
       "https://*.instagram.com/*",
       "https://raw.githubusercontent.com/*"
     ],
-    "update_url": "https://raw.githubusercontent.com/cfieiras/ig-growth-auto-bot-clon/main/updates.xml",
+    "update_url": "https://raw.githubusercontent.com/cfieiras/SocialRadar/main/updates.xml",
     "permissions": [
       "storage",
       "scripting",

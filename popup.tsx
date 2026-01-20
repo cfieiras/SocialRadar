@@ -5,7 +5,7 @@ import { supabase } from "./lib/supabaseClient"
 import "./style.css"
 
 const REPO_OWNER = "cfieiras"
-const REPO_NAME = "ig-growth-auto-bot-clon"
+const REPO_NAME = "SocialRadar"
 
 function UpdateBanner() {
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null)
