@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+  <!-- 
+    REPLACE 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' WITH YOUR ACTUAL EXTENSION ID 
+    To find your ID: Install the extension from chrome://extensions -> Enable Developer Mode -> Look for ID
+  -->
+  <app appid='bcbilaplidopacahogjklopbmelfakio'>
+    <updatecheck codebase='https://github.com/cfieiras/ig-growth-auto-bot-clon/releases/latest/download/bcbilaplidopacahogjklopbmelfakio.crx' version='1.1.5' />
+  </app>
+</gupdate>
