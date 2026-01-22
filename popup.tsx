@@ -1,8 +1,15 @@
 import { useStorage } from "@plasmohq/storage/hook"
+import { Storage } from "@plasmohq/storage"
+
+const storage = new Storage({
+  area: "local"
+})
 import { LayoutDashboard, Play, Settings, Zap, Users, Heart, MessageSquare, ShieldCheck, Square, Lock, ArrowRight, LogIn, AlertCircle } from "lucide-react"
 import { useState, useEffect } from "react"
 import { supabase } from "./lib/supabaseClient"
+import { refreshUserProfile } from "./lib/instagramApi"
 import "./style.css"
+import socialRadarLogo from "url:~assets/social_radar_logo.png"
 
 const REPO_OWNER = "cfieiras"
 const REPO_NAME = "SocialRadar"
@@ -76,8 +83,8 @@ function SubscriptionScreen({ user, onCheckPayment, onLogout }: { user: any, onC
       <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-64 h-64 bg-primary-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <div className="mt-8 mb-6 text-center relative z-10">
-        <div className="mx-auto w-16 h-16 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-6 group hover:scale-105 transition-transform">
-          <ShieldCheck className="w-8 h-8 text-white" />
+        <div className="mx-auto w-20 h-20 bg-slate-900 border border-slate-800 rounded-3xl flex items-center justify-center shadow-lg shadow-emerald-500/10 mb-6 group hover:scale-105 transition-transform overflow-hidden p-3">
+          <img src={socialRadarLogo} alt="SocialRadar Logo" className="w-full h-full object-contain" />
         </div>
         <h1 className="text-2xl font-black tracking-tight mb-2">Upgrade to Pro</h1>
         <p className="text-slate-400 text-sm">Unlock the full power of SocialRadar automation.</p>
@@ -131,7 +138,7 @@ function SubscriptionScreen({ user, onCheckPayment, onLogout }: { user: any, onC
 }
 
 function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, isPremium: boolean) => void, onGoToSignUp: () => void }) {
-  const [rememberedEmail, setRememberedEmail] = useStorage("rememberedEmail", "")
+  const [rememberedEmail, setRememberedEmail] = useStorage({ key: "rememberedEmail", instance: storage }, "")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [rememberMe, setRememberMe] = useState(false)
@@ -210,8 +217,8 @@ function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, isPremium
       <UpdateBanner />
 
       <div className="mt-8 mb-12 text-center relative z-10">
-        <div className="mx-auto w-16 h-16 bg-gradient-to-br from-primary-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg shadow-primary-500/20 mb-6 group hover:scale-105 transition-transform">
-          <Zap className="w-8 h-8 text-white" fill="white" />
+        <div className="mx-auto w-20 h-20 bg-slate-900 border border-slate-800 rounded-3xl flex items-center justify-center shadow-lg shadow-primary-500/10 mb-6 group hover:scale-105 transition-transform overflow-hidden p-3">
+          <img src={socialRadarLogo} alt="SocialRadar Logo" className="w-full h-full object-contain" />
         </div>
         <h1 className="text-2xl font-black tracking-tight mb-2">Welcome Back</h1>
         <p className="text-slate-400 text-sm">{errorMsg ? "Authentication Failed" : "Sign in to access your SocialRadar automation."}</p>
@@ -283,7 +290,7 @@ function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, isPremium
   )
 }
 
-function SignUpScreen({ onBack }: { onBack: () => void }) {
+function SignUpScreen({ onBack, onLogin }: { onBack: () => void, onLogin: (user: any, isPremium: boolean) => void }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -303,6 +310,24 @@ function SignUpScreen({ onBack }: { onBack: () => void }) {
 
     if (error) {
       setMsg({ type: "error", text: error.message })
+    } else if (data.session && data.user) {
+      // Email confirmation is disabled, log in immediately
+
+      // 1. Store Session Token
+      await chrome.storage.local.set({
+        session_token: data.session.access_token,
+        user_uid: data.user.id
+      })
+
+      // 2. New users are not premium by default
+      const isPremium = false
+
+      setMsg({ type: "success", text: "Account created! Logging in..." })
+
+      // Short delay to show success message
+      setTimeout(() => {
+        onLogin(data.user, isPremium)
+      }, 1000)
     } else {
       setMsg({ type: "success", text: "Account created! Please check your email to confirm." })
     }
@@ -348,13 +373,13 @@ function SignUpScreen({ onBack }: { onBack: () => void }) {
 }
 
 function IndexPopup() {
-  const [stats] = useStorage("stats", { follows: 0, likes: 0, dms: 0 })
-  const [isRunning, setIsRunning] = useStorage("isRunning", false)
+  const [stats] = useStorage({ key: "stats", instance: storage }, { follows: 0, likes: 0, dms: 0, unfollows: 0 })
+  const [isRunning, setIsRunning] = useStorage({ key: "isRunning", instance: storage }, false)
   // New Auth State
-  const [session, setSession] = useStorage("session", { isLoggedIn: false, user: null, isPremium: false })
+  const [session, setSession] = useStorage({ key: "session", instance: storage }, { isLoggedIn: false, user: null, isPremium: false })
   const [isRegistering, setIsRegistering] = useState(false)
   // New Analytics Data
-  const [userStats] = useStorage("currentUserStats", null)
+  const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
 
   // Re-verify subscription on load (Case: Session persisted but subscription expired)
   useEffect(() => {
@@ -383,6 +408,8 @@ function IndexPopup() {
 
     if (session?.isLoggedIn) {
       verifySubscription()
+      // Refresh IG Profile data on enter
+      refreshUserProfile()
     }
   }, [session?.isLoggedIn])
 
@@ -402,7 +429,10 @@ function IndexPopup() {
   // Auth Gate
   if (!session?.isLoggedIn) {
     if (isRegistering) {
-      return <SignUpScreen onBack={() => setIsRegistering(false)} />
+      return <SignUpScreen
+        onBack={() => setIsRegistering(false)}
+        onLogin={(user, isPremium) => setSession({ isLoggedIn: true, user: user, isPremium: isPremium })}
+      />
     }
     return <LoginScreen onLogin={(user, isPremium) => setSession({ isLoggedIn: true, user: user, isPremium: isPremium })} onGoToSignUp={() => setIsRegistering(true)} />
   }
@@ -441,8 +471,16 @@ function IndexPopup() {
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600">
-                  <img src={userStats.avatarUrl} alt="profile" className="w-full h-full rounded-full border-2 border-slate-950 object-cover" />
+                <div className="w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 flex items-center justify-center overflow-hidden">
+                  <img
+                    src={userStats.avatarUrl}
+                    alt="profile"
+                    className="w-full h-full rounded-full border-2 border-slate-950 object-cover"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${userStats.username}&background=0f172a&color=fff`
+                    }}
+                  />
                 </div>
                 {/* Verified Badge Mockup if we had logic, here just static or hidden */}
               </div>
@@ -461,12 +499,12 @@ function IndexPopup() {
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-gradient-to-br from-primary-500 to-purple-600 rounded-xl shadow-lg shadow-primary-500/20">
-                <Zap className="w-6 h-6 text-white" fill="white" />
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-center shadow-lg shadow-primary-500/10 overflow-hidden p-1.5">
+                <img src={socialRadarLogo} alt="Logo" className="w-full h-full object-contain" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight">GrowthBot</h1>
+                <h1 className="text-xl font-bold tracking-tight">SocialRadar</h1>
                 <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold flex items-center gap-1">
                   <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span> PRO ENABLED
                 </p>
@@ -480,11 +518,12 @@ function IndexPopup() {
       </header>
 
       {/* Main Stats */}
-      <div className="grid grid-cols-3 gap-3 mb-8 relative z-10">
+      <div className="grid grid-cols-2 gap-3 mb-8 relative z-10">
         {[
-          { icon: Users, label: "Followers", val: userStats?.stats?.followers || "—", color: "text-blue-400" },
-          { icon: Heart, label: "Following", val: userStats?.stats?.following || "—", color: "text-rose-400" },
-          { icon: MessageSquare, label: "Posts", val: userStats?.stats?.posts || "—", color: "text-emerald-400" },
+          { icon: Users, label: "Follows", val: stats?.follows || 0, color: "text-blue-400" },
+          { icon: Heart, label: "Likes", val: stats?.likes || 0, color: "text-rose-400" },
+          { icon: Zap, label: "Unfollows", val: stats?.unfollows || 0, color: "text-amber-400" },
+          { icon: MessageSquare, label: "DMs", val: stats?.dms || 0, color: "text-emerald-400" },
         ].map((item, idx) => (
           <div
             key={idx}
@@ -515,16 +554,6 @@ function IndexPopup() {
 
       {/* Actions */}
       <div className="mt-auto space-y-3 relative z-10">
-        <button
-          onClick={() => setIsRunning(!isRunning)}
-          className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-3 transition-all shadow-xl shadow-primary-500/20 ${isRunning
-            ? "bg-slate-800 text-slate-300 border border-slate-700"
-            : "bg-gradient-to-r from-primary-600 to-primary-500 text-white"
-            }`}
-        >
-          {isRunning ? "Stop Automation" : "Start Automation"}
-          {isRunning ? <Square className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
-        </button>
 
         <button
           onClick={openDashboard}

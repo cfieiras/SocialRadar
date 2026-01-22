@@ -1,3 +1,26 @@
+# SocialRadar - Version 1.1.7
+Date: 2026-01-22
+
+## Milestone Summary
+Release 1.1.7 introduces professional competitor analysis tools, enabling users to fetch profile data automatically and perform deep audits on engagement metrics.
+
+## Key Features
+
+### 1. Competitor Watchlist Enhancements
+- **Automatic Data Fetch**: When adding a competitor, the system now automatically retrieves their Full Name, Bio, Follower Count, and Post Count using the Instagram API.
+- **Visual Feedback**: Transition animations and loading states when fetching profile data.
+- **Profile Links**: Direct access to competitor profiles via clickable @usernames in the dashboard.
+
+### 2. Deep Audit Capabilities
+- **Engagement Analysis**: New "Deep Audit" mode that scans the last 12 posts of any profile (own or competitor).
+- **Network Interception**: Leverages GraphQL interception to gather precise interaction data (likes/comments) to calculate accurate Engagement Rates and Trust Scores.
+
+### 3. Stability Improvements
+- **Session Validation**: Improved detection of Instagram login status to prevent bot errors when logged out.
+- **Data Fallbacks**: Enhanced profile scraping logic to handle various Instagram UI layouts.
+
+---
+
 # IG Growth Auto Bot - Version 1.0.0 (Official Release)
 Date: 2026-01-12
 
