@@ -41,6 +41,27 @@ export interface Unfollower {
 /**
  * Fetches the current logged-in user's profile information from Instagram.
  */
+/**
+ * Detects the username currently logged in on Instagram.
+ */
+export async function detectActiveUsername(): Promise<string | null> {
+    try {
+        const res = await fetch("https://www.instagram.com/", {
+            headers: { 'User-Agent': navigator.userAgent }
+        })
+        const html = await res.text()
+        const match = html.match(/"username":"([^"]+)"/) ||
+            html.match(/\\u0022username\\u0022:\\u0022([^\\u0022]+)\\u0022/)
+
+        if (match && match[1]) {
+            return match[1].replace(/\\/g, '')
+        }
+    } catch (e) {
+        console.warn("IG API: Username detection fetch failed", e)
+    }
+    return null
+}
+
 export async function refreshUserProfile(targetUsername?: string): Promise<InstagramProfile | null> {
     try {
         console.log(`IG API: Starting profile refresh for ${targetUsername || 'self'}...`)
@@ -57,22 +78,10 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         let username = targetUsername
         if (!username) {
             username = await storage.get<string>("lastKnownUsername")
-
-            try {
-                const res = await fetch("https://www.instagram.com/", {
-                    headers: { 'User-Agent': navigator.userAgent }
-                })
-                const html = await res.text()
-                const match = html.match(/"username":"([^"]+)"/) ||
-                    html.match(/\\u0022username\\u0022:\\u0022([^\\u0022]+)\\u0022/)
-
-                if (match && match[1]) {
-                    const detected = match[1].replace(/\\/g, '')
-                    username = detected
-                    await storage.set("lastKnownUsername", username)
-                }
-            } catch (e) {
-                console.warn("IG API: Username detection fetch failed", e)
+            const detected = await detectActiveUsername()
+            if (detected) {
+                username = detected
+                await storage.set("lastKnownUsername", username)
             }
         }
 
