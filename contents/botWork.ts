@@ -414,6 +414,11 @@ class InstagramBot {
 
         // If nothing was chosen, mission is complete. Auto-Stop.
         this.addLog("🛑 All tasks complete or lists empty. Engine stopping.", "warning")
+        
+        // Show summary before stopping
+        const summary = `✅ Resumen del ciclo:\n🔥 Likes: ${this.stats.likes}\n👥 Follows: ${this.stats.follows}\n👋 Unfollows: ${this.stats.unfollows}\n💬 DMs: ${this.stats.dms}`
+        alert(summary)
+        
         await storage.set("isRunning", false)
         this.active = false
 
