@@ -120,7 +120,8 @@ function Dashboard() {
         unfollowEnabled: false,
         sourceHashtags: true,
         sourceCompetitors: false,
-        chaosEnabled: false
+        chaosEnabled: false,
+        continuousSession: false
     })
 
     const toggleProtect = (username: string) => {
@@ -1108,6 +1109,39 @@ function Dashboard() {
                                                 className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-purple-500 outline-none transition-all"
                                             />
                                         </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Continuous Session Section */}
+                            <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-emerald-500/30 transition-all group">
+                                <div className="flex items-center justify-between mb-8">
+                                    <div className="flex items-center gap-4">
+                                        <div className="p-4 bg-emerald-500/20 rounded-2xl text-emerald-400">
+                                            <Clock className="w-8 h-8" />
+                                        </div>
+                                        <div>
+                                            <h2 className="text-2xl font-black text-white tracking-tight">Sesión Continua</h2>
+                                            <p className="text-sm text-slate-500 font-medium">El bot no se detiene al completar tareas. Reinicia automáticamente cada día.</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setConfig({ ...config, continuousSession: !config.continuousSession })}
+                                        className={`flex items-center gap-3 px-6 py-3 rounded-xl font-bold transition-all ${config.continuousSession
+                                            ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20"
+                                            : "bg-slate-800 text-slate-400"
+                                            }`}
+                                    >
+                                        {config.continuousSession ? "ACTIVADO" : "DESACTIVADO"}
+                                        <div className={`w-3 h-3 rounded-full ${config.continuousSession ? "bg-white" : "bg-slate-600"}`} />
+                                    </button>
+                                </div>
+
+                                {config.continuousSession && (
+                                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-6 animate-in fade-in slide-in-from-top-4 duration-500">
+                                        <p className="text-sm text-emerald-400 font-medium">
+                                            ✅ Modo continuo activo. El bot trabajará durante todo el día y reiniciará sesiones automáticamente al día siguiente.
+                                        </p>
                                     </div>
                                 )}
                             </div>

@@ -15,10 +15,13 @@ chrome.runtime.onInstalled.addListener(async () => {
     // Set up refresh alarm (every 12 hours)
     chrome.alarms.create("REFRESH_STATS", { periodInMinutes: 720 })
 
+    // Set up daily reset alarm for continuous sessions (every 24 hours at midnight)
+    chrome.alarms.create("DAILY_RESET", { periodInMinutes: 1440 })
+
     // Initial refresh
     refreshUserProfile()
 
-    console.log("GrowthBot: Background service worker initialized")
+    console.log("GrowthBot: Background service worker initialized with continuous session support")
 })
 
 // Listen for alarms
@@ -26,6 +29,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === "REFRESH_STATS") {
         console.log("GrowthBot: Alarm triggered - Refreshing stats...")
         refreshUserProfile()
+    }
+    
+    if (alarm.name === "DAILY_RESET") {
+        console.log("GrowthBot: Daily reset alarm - Preparing for new session day...")
+        // Reset daily counters for continuous sessions
+        storage.set("lastNavTime", 0)
+        storage.set("dailyResetTimestamp", Date.now())
     }
 })
 

@@ -51,7 +51,8 @@ class InstagramBot {
         unfollowEnabled: false,
         sourceHashtags: true,
         sourceCompetitors: false,
-        chaosEnabled: false
+        chaosEnabled: false,
+        continuousSession: false
     }
 
     private delayConfig: any = {
@@ -412,7 +413,33 @@ class InstagramBot {
             }
         }
 
-        // If nothing was chosen, mission is complete. Auto-Stop.
+        // If nothing was chosen, mission is complete. Check for continuous session mode
+        if (this.config.continuousSession) {
+            this.addLog("🔄 Sesión Continua activada. Reiniciando ciclo...", "success")
+            
+            // Show summary before continuing
+            const summary = `✅ Ciclo completado:\n🔥 Likes: ${this.stats.likes}\n👥 Follows: ${this.stats.follows}\n👋 Unfollows: ${this.stats.unfollows}\n💬 DMs: ${this.stats.dms}\n\n🔄 Reiniciando sesión automáticamente...`
+            this.addLog(summary.replace(/\n/g, " | "), "success")
+            
+            // Reset session counters for the new cycle
+            this.currentSessionActions = 0
+            this.sessionLikes = 0
+            this.sessionFollows = 0
+            this.sessionEngagedProfiles.clear()
+            this.sessionStart = Date.now()
+            
+            // Save reset stats to storage
+            await storage.set("botStartTime", Date.now())
+            
+            // Wait a moment before continuing
+            await this.sleep(5000)
+            
+            // Navigate to start a new cycle
+            await this.navigateToNextTarget()
+            return
+        }
+
+        // If nothing was chosen and continuous mode is off, Auto-Stop.
         this.addLog("🛑 All tasks complete or lists empty. Engine stopping.", "warning")
         
         // Show summary before stopping
