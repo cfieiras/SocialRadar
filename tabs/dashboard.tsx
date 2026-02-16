@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
 import { Storage } from "@plasmohq/storage"
 
@@ -9,15 +9,31 @@ import {
     Users, Heart, MessageSquare, Settings, BarChart3,
     History, Shield, Zap, Search, Bell, ExternalLink,
     ChevronRight, Play, Pause, Database, Clock, Square,
-    CheckCircle2, Circle, UserPlus, Trash2, AlertTriangle, Activity, X
+    CheckCircle2, Circle, UserPlus, Trash2, AlertTriangle, Activity, X, Radar, Send, Monitor, Moon
 } from "lucide-react"
 import "../style.css"
-import { refreshUserProfile, runDeepScan, fetchCompetitorProfile, type Unfollower } from "../lib/instagramApi"
+import { refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
+import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
 
 const GIST_VERSION_URL = "https://gist.githubusercontent.com/cfieiras/a74789aead58df67812f31099ffe7e02/raw/social-radar-version.json"
 const REPO_RELEASES_URL = "https://github.com/cfieiras/SocialRadar/releases/latest"
+
+
+const Sparkline = ({ data, dataKey, color }: { data: any[], dataKey: string, color: string }) => {
+    const validData = [...(data || [])].reverse().filter(d => d[dataKey] !== undefined)
+    if (validData.length < 2) return <div className="h-8 mt-2" />
+    return (
+        <div className="h-8 w-24 mt-0 opacity-70">
+            <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={validData}>
+                    <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
+                </LineChart>
+            </ResponsiveContainer>
+        </div>
+    )
+}
 
 function Dashboard() {
     const [updateStatus, setUpdateStatus] = useState<{ available: boolean, remoteVersion: string }>({ available: false, remoteVersion: "" })
@@ -38,37 +54,104 @@ function Dashboard() {
         checkUpdate()
     }, [])
     const [activeTab, setActiveTab] = useState("overview")
+
+    const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
+    const currentUsername = userStats?.username || "global"
+
+    const [termsAccepted] = useStorage<boolean>({ key: "termsAccepted", instance: storage })
+    const [session, setSession] = useStorage({ key: "session", instance: storage }, { isLoggedIn: false, user: null, isPremium: false })
+    const [isRegistering, setIsRegistering] = useState(false)
     const [isRunning, setIsRunning] = useStorage({ key: "isRunning", instance: storage }, false)
-    const [statsData, setStatsData] = useStorage({ key: "stats", instance: storage }, { follows: 0, likes: 0, dms: 0, unfollows: 0 })
-    const [hashtags, setHashtags] = useStorage({ key: "targetHashtags", instance: storage }, ["#digitalart", "#photography"])
-    const [competitors, setCompetitors] = useStorage({ key: "targetCompetitors", instance: storage }, ["@cristiano"])
-    const [competitorsData, setCompetitorsData] = useStorage({ key: "competitorsData", instance: storage }, [])
+    const [statsData, setStatsData] = useStorage({ key: `${currentUsername}_stats`, instance: storage }, { follows: 0, likes: 0, dms: 0, unfollows: 0 })
+    const [hashtags, setHashtags] = useStorage({ key: `${currentUsername}_targetHashtags`, instance: storage }, ["#digitalart"])
+    const [competitors, setCompetitors] = useStorage({ key: `${currentUsername}_targetCompetitors`, instance: storage }, ["@leomessi"])
+    const [competitorsData, setCompetitorsData] = useStorage({ key: `${currentUsername}_competitorsData`, instance: storage }, [])
     const [newTag, setNewTag] = useState("")
     const [newCompetitor, setNewCompetitor] = useState("")
-    const [logs] = useStorage({ key: "logs", instance: storage }, [])
-    const [followedUsers, setFollowedUsers] = useStorage({ key: "followedUsers", instance: storage }, [])
+    const [logs] = useStorage({ key: `${currentUsername}_logs`, instance: storage }, [])
+    const [followedUsers, setFollowedUsers] = useStorage({ key: `${currentUsername}_followedUsers`, instance: storage }, [])
     const [botStartTime] = useStorage({ key: "botStartTime", instance: storage }, 0)
-    const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
-    const [followerHistory] = useStorage({ key: "followerHistory", instance: storage }, [])
+    const [lastReport] = useStorage({ key: `${currentUsername}_lastSessionReport`, instance: storage }, null)
+    const [followerHistory] = useStorage({ key: `${currentUsername}_followerHistory`, instance: storage }, [])
     const [elapsedTime, setElapsedTime] = useState("00:00:00")
     const [isScanning, setIsScanning] = useState(false)
     const [scanProgress, setScanProgress] = useState(0)
     const [unfollowers, setUnfollowers] = useState<Unfollower[]>([])
+
+    // Live Session Stats
+    const [sessionLikes] = useStorage({ key: `${currentUsername}_sessionLikes`, instance: storage }, 0)
+    const [sessionFollows] = useStorage({ key: `${currentUsername}_sessionFollows`, instance: storage }, 0)
+    const [sessionUnfollows] = useStorage({ key: `${currentUsername}_sessionUnfollows`, instance: storage }, 0)
     const [showScoreModal, setShowScoreModal] = useState(false)
     const [showEngagementModal, setShowEngagementModal] = useState(false)
+
     const [chartReady, setChartReady] = useState(false)
+    const [showFeedbackModal, setShowFeedbackModal] = useState(false)
+    const [feedbackMessage, setFeedbackMessage] = useState("")
+    const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
 
     useEffect(() => {
         const timer = setTimeout(() => setChartReady(true), 1000)
         return () => clearTimeout(timer)
     }, [])
 
+    const lastProcessedTs = useRef(0)
+    /* 
+    // Disabled automatic sync from useEffect to prevent race conditions with refreshUserProfile
     useEffect(() => {
-        refreshUserProfile()
-        loadUnfollowers()
-    }, [])
+        if (!userStats?.timestamp) return
 
-    const loadUnfollowers = async () => {
+        // Only sync if the stats are new (or at least different from what we last saw this session)
+        // AND checks if the stats are actually from today (avoid syncing stale data on reload)
+        if (userStats.timestamp > lastProcessedTs.current) {
+            const statDate = new Date(userStats.timestamp).toDateString()
+            const today = new Date().toDateString()
+
+            if (statDate === today) {
+                // syncStatsToSupabase(userStats) 
+            }
+            lastProcessedTs.current = userStats.timestamp
+        }
+    }, [userStats])
+    */
+
+    const [supabaseHistory, setSupabaseHistory] = useState<any[]>([])
+    const [displayStats, setDisplayStats] = useState<any>(null)
+    const [isOutdated, setIsOutdated] = useState(false)
+    const [lastSupabaseSync] = useStorage({ key: "lastSupabaseSync", instance: storage }, "")
+
+    useEffect(() => {
+        const today = new Date().toISOString().split('T')[0]
+        const hasHistoryToday = displayStats?.date === today
+        const hasSyncedToday = lastSupabaseSync === today
+
+        // If we have history for today OR we just synced today, it's NOT outdated
+        setIsOutdated(!hasHistoryToday && !hasSyncedToday)
+    }, [displayStats, lastSupabaseSync])
+
+    useEffect(() => {
+        if (userStats?.username) {
+            loadUnfollowers(userStats.username)
+            loadHistory(userStats.username)
+        }
+    }, [userStats?.username])
+
+    const loadHistory = async (username: string) => {
+        if (!username) return
+        const history = await fetchHistoryFromSupabase(username)
+        if (history && history.length > 0) {
+            setSupabaseHistory(history.reverse())
+            // history[0] is the latest entry (DESC from API)
+            const rawLast = history[0]
+            setDisplayStats(rawLast)
+        } else {
+            setSupabaseHistory([])
+            setDisplayStats(null)
+        }
+    }
+
+    const loadUnfollowers = async (username: string) => {
+        if (!username) return
         const { data: { session } } = await supabase.auth.getSession()
         if (!session) return
 
@@ -76,9 +159,11 @@ function Dashboard() {
             .from('unfollowers_detected')
             .select('*')
             .eq('user_id', session.user.id)
+            .eq('instagram_username', username)
             .order('detected_at', { ascending: false })
 
         if (data) setUnfollowers(data)
+        else setUnfollowers([])
     }
 
     const handleDeepScan = async () => {
@@ -113,7 +198,7 @@ function Dashboard() {
     }, [isRunning, botStartTime])
 
     // Configuración de módulos activos
-    const [config, setConfig] = useStorage({ key: "botConfig", instance: storage }, {
+    const [config, setConfig] = useStorage({ key: `${currentUsername}_botConfig`, instance: storage }, {
         likeEnabled: true,
         followEnabled: false,
         dmEnabled: false,
@@ -121,7 +206,12 @@ function Dashboard() {
         sourceHashtags: true,
         sourceCompetitors: false,
         chaosEnabled: false,
-        continuousSession: false
+        continuousSession: false,
+        overlayEnabled: true,
+        sourcePosts: false,
+        sleepEnabled: false,
+        sleepStart: "23:00",
+        sleepDuration: 8
     })
 
     const toggleProtect = (username: string) => {
@@ -132,7 +222,7 @@ function Dashboard() {
         setFollowedUsers(updated)
     }
 
-    const [delays, setDelays] = useStorage({ key: "delays", instance: storage }, {
+    const [delays, setDelays] = useStorage({ key: `${currentUsername}_delays`, instance: storage }, {
         navMin: 10, navMax: 20,
         viewMin: 8, viewMax: 15,
         actionMin: 3, actionMax: 7,
@@ -210,6 +300,33 @@ function Dashboard() {
         }
     }
 
+
+    const submitFeedback = async () => {
+        if (!feedbackMessage.trim()) return
+        setIsSubmittingFeedback(true)
+        try {
+            const { data: { session } } = await supabase.auth.getSession()
+            const { error } = await supabase
+                .from('feedback')
+                .insert({
+                    message: feedbackMessage,
+                    user_id: session?.user?.id,
+                    type: 'suggestion'
+                })
+
+            if (error) throw error
+
+            alert("¡Gracias por tu sugerencia! La hemos recibido correctamente.")
+            setFeedbackMessage("")
+            setShowFeedbackModal(false)
+        } catch (e) {
+            console.error("Error sending feedback:", e)
+            alert("Error al enviar la sugerencia. Por favor intenta nuevamente.")
+        } finally {
+            setIsSubmittingFeedback(false)
+        }
+    }
+
     const clearDatabase = () => {
         if (window.confirm("¿Estás seguro de que quieres borrar el historial de follows?")) {
             setFollowedUsers([])
@@ -232,26 +349,33 @@ function Dashboard() {
 
     const ratioInfo = getRatioStats()
 
+    const erValue = (userStats?.engagementRate || 0) > 0 ? userStats.engagementRate : (displayStats?.engagementRate || 0)
+    const trustValue = (userStats?.trustScore || 0) > 0 ? userStats.trustScore : (displayStats?.trustScore || 0)
+
     const authorityStats = [
         {
-            label: "Account Trust Score",
-            value: `${userStats?.trustScore || 0}`,
-            trend: (userStats?.trustScore || 0) > 70 ? "High Trust" : "Building",
-            trendColor: (userStats?.trustScore || 0) > 70 ? "bg-blue-500/10 text-blue-400" : "bg-slate-800 text-slate-400",
+            label: "Trust Score",
+            value: trustValue > 0 ? trustValue : "—",
+            trend: trustValue > 0 ? (trustValue > 70 ? "Excellent" : "Improving") : "No Data",
+            trendColor: trustValue > 0 ? (trustValue > 70 ? "bg-blue-500/10 text-blue-400" : "bg-slate-800 text-slate-400") : "bg-slate-900 text-slate-600",
             tooltip: "Master score based on your engagement, ratio, and posting frequency. Higher scores mean better algorithm reach.",
             icon: Shield, color: "text-blue-500",
             action: () => setShowScoreModal(true),
-            hidden: !userStats?.analyzedPostsCount || userStats.analyzedPostsCount === 0
+            hidden: false,
+            dataKey: "trustScore",
+            colorHex: "#3b82f6"
         },
         {
             label: "Engagement Rate",
-            value: `${userStats?.engagementRate || 0}%`,
-            trend: (userStats?.engagementRate || 0) > 3 ? "Excellent" : "Regular",
-            trendColor: (userStats?.engagementRate || 0) > 3 ? "bg-purple-500/10 text-purple-400" : "bg-slate-800 text-slate-400",
+            value: erValue > 0 ? `${erValue}%` : "—",
+            trend: erValue > 0 ? (erValue > 3 ? "Excellent" : "Regular") : "No Data",
+            trendColor: erValue > 0 ? (erValue > 3 ? "bg-purple-500/10 text-purple-400" : "bg-slate-800 text-slate-400") : "bg-slate-900 text-slate-600",
             tooltip: "Percentage of your followers interacting with your content. 3%+ is the industry benchmark for healthy accounts.",
             icon: Activity, color: "text-purple-400",
             action: () => setShowEngagementModal(true),
-            hidden: !userStats?.analyzedPostsCount || userStats.analyzedPostsCount === 0
+            hidden: false,
+            dataKey: "engagementRate",
+            colorHex: "#c084fc"
         },
         {
             label: "Follow/Following Ratio",
@@ -283,20 +407,69 @@ function Dashboard() {
                 }
             }
         },
-        { label: "Total DMs", value: (statsData?.dms || 0).toLocaleString(), trend: "Stable", icon: MessageSquare, color: "text-emerald-400", tooltip: "Direct messages sent by the bot during active cycles." },
+        { label: "Total Comments", value: (statsData?.dms || 0).toLocaleString(), trend: "Dev Mode", icon: MessageSquare, color: "text-emerald-400", tooltip: "Automated comments feature (Currently in Development)." },
     ]
+
+
+    // Gating Logic & Handlers
+    const handleLogout = async () => {
+        await supabase.auth.signOut()
+        await chrome.storage.local.remove(['session_token', 'user_uid'])
+        setSession({ isLoggedIn: false, user: null, isPremium: false })
+        setIsRunning(false)
+    }
+
+    const verifySubscription = async () => {
+        if (!session?.user?.id) return
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('is_premium')
+            .eq('id', session.user.id)
+            .single()
+
+        if (profile?.is_premium) {
+            setSession(prev => ({ ...prev, isPremium: true }))
+        }
+    }
+
+    if (termsAccepted === undefined) return null // Loading state
+
+    if (!termsAccepted) {
+        window.location.href = "onboarding.html"
+        return null
+    }
+
+    if (!session?.isLoggedIn) {
+        return (
+            <div className="flex h-screen w-full items-center justify-center bg-slate-950">
+                {isRegistering ? (
+                    <SignUpScreen onBack={() => setIsRegistering(false)} onLogin={(user, isPremium) => setSession({ isLoggedIn: true, user, isPremium })} />
+                ) : (
+                    <LoginScreen onLogin={(user, isPremium) => setSession({ isLoggedIn: true, user, isPremium })} onGoToSignUp={() => setIsRegistering(true)} />
+                )}
+            </div>
+        )
+    }
+
+    if (!session?.isPremium) {
+        return (
+            <div className="flex h-screen w-full items-center justify-center bg-slate-950">
+                <SubscriptionScreen user={session.user} onCheckPayment={verifySubscription} onLogout={handleLogout} />
+            </div>
+        )
+    }
 
     return (
         <div className="flex h-screen bg-slate-950 text-slate-50 font-sans overflow-hidden">
             {/* Sidebar */}
             <aside className="w-80 bg-slate-900/50 border-r border-slate-800 flex flex-col p-8 backdrop-blur-xl">
-                <div className="flex items-center gap-4 mb-12 px-2">
-                    <div className="p-3 bg-primary-600 rounded-2xl shadow-2xl shadow-primary-500/40 animate-pulse">
-                        <Zap className="w-8 h-8 text-white" fill="white" />
+                <div className="flex items-center gap-3 mb-12 px-2">
+                    <div className="w-10 h-10 bg-gradient-to-tr from-emerald-600 to-teal-400 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                        <Radar className="text-white w-6 h-6" />
                     </div>
                     <div>
-                        <h1 className="text-2xl font-black tracking-tighter bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">SOCIALRADAR</h1>
-                        <span className="text-[10px] font-bold tracking-[0.2em] text-primary-500 uppercase">Pro Edition</span>
+                        <h1 className="text-xl font-outfit font-bold tracking-tight text-white">SocialRadar</h1>
+                        <span className="text-[10px] font-bold tracking-[0.2em] text-emerald-500 uppercase">Pro Edition</span>
                     </div>
                 </div>
 
@@ -328,7 +501,7 @@ function Dashboard() {
                         {updateStatus.available && <div className="absolute inset-0 bg-emerald-500/5 animate-pulse" />}
                         <div className="relative z-10">
                             <p className={`text-[10px] font-black uppercase tracking-widest mb-2 ${updateStatus.available ? "text-emerald-400" : "text-primary-500"}`}>
-                                {updateStatus.available ? "Update Available" : "Build Profile"}
+                                {updateStatus.available ? "Update Available" : "Private Beta"}
                             </p>
                             <div className="flex items-center gap-2">
                                 <p className={`text-sm font-bold italic ${updateStatus.available ? "text-white" : "text-slate-400"}`}>
@@ -342,7 +515,7 @@ function Dashboard() {
                         </div>
                     </div>
                 </div>
-            </aside>
+            </aside >
 
             {/* Main Content */}
             <main className="flex-grow flex flex-col overflow-y-auto relative">
@@ -359,25 +532,36 @@ function Dashboard() {
                             {activeTab === 'settings' && 'Latency Control'}
                             {activeTab === 'database' && 'Audience Database'}
                         </h2>
-                        <p className="text-sm text-slate-500 font-medium">Real-time modular engine configuration.</p>
+                        <p className="text-sm text-slate-500 font-medium">Real-time modular bot configuration.</p>
                     </div>
                     <div className="flex items-center gap-6">
-                        {isRunning && (
-                            <div className="px-5 py-3 rounded-2xl bg-slate-900/50 border border-slate-800 flex items-center gap-3">
-                                <span className="relative flex h-3 w-3">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                                </span>
-                                <span className="font-mono font-bold text-emerald-400 tabular-nums tracking-widest">{elapsedTime}</span>
-                            </div>
-                        )}
+
                         <button
-                            onClick={() => {
+                            onClick={async () => {
                                 const nextState = !isRunning
-                                setIsRunning(nextState)
                                 if (nextState) {
-                                    window.open("https://www.instagram.com/", "_blank")
+                                    // 1. Check for stale stats (< 24h)
+                                    const now = Date.now()
+                                    const lastCheck = userStats?.timestamp || 0
+                                    const hoursDiff = (now - lastCheck) / (1000 * 60 * 60)
+                                    const lastKnownUsername = await storage.get<string>("lastKnownUsername")
+
+                                    let targetUrl = "https://www.instagram.com/"
+
+                                    if (hoursDiff > 24 || !userStats?.engagementRate) {
+                                        if (lastKnownUsername) {
+                                            targetUrl = `https://www.instagram.com/${lastKnownUsername}/?mode=deep&start_audit=true`
+                                        } else {
+                                            targetUrl = "https://www.instagram.com/?start_audit=true"
+                                        }
+                                    }
+
+                                    await storage.set("sessionLikes", 0)
+                                    await storage.set("sessionFollows", 0)
+                                    await storage.set("sessionUnfollows", 0)
+                                    window.open(targetUrl, "_blank")
                                 }
+                                setIsRunning(nextState)
                             }}
                             className={`h-12 px-8 rounded-2xl font-black text-sm tracking-widest uppercase transition-all duration-300 flex items-center gap-3 ${isRunning
                                 ? "bg-rose-500 text-white shadow-lg shadow-rose-500/20"
@@ -385,7 +569,7 @@ function Dashboard() {
                                 }`}
                         >
                             {isRunning ? <Square className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
-                            {isRunning ? "Stop Automation" : "Launch Engine"}
+                            {isRunning ? "Stop Automation" : "Launch Bot"}
                         </button>
                     </div>
                 </header>
@@ -438,29 +622,58 @@ function Dashboard() {
                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Posts</p>
                                             <p className="text-3xl font-black text-white tracking-tighter">{Number(userStats.stats.posts).toLocaleString()}</p>
                                         </div>
-                                        {userStats?.analyzedPostsCount > 0 && (
-                                            <>
-                                                <div className="w-px h-12 bg-slate-800" />
-                                                <div className="text-center">
-                                                    <p className="text-[10px] font-black uppercase tracking-widest text-primary-500 mb-2">Engagement</p>
-                                                    <p className="text-3xl font-black text-primary-400 tracking-tighter">{userStats.engagementRate || 0}%</p>
-                                                </div>
-                                            </>
-                                        )}
-                                        <div className="w-px h-12 bg-slate-800" />
-                                        <button
-                                            onClick={() => {
-                                                const url = `https://www.instagram.com/${userStats.username}/?audit=true`
-                                                chrome.tabs.create({ url, active: true })
-                                            }}
-                                            className="px-6 py-3 rounded-2xl bg-primary-600/10 border border-primary-500/20 text-primary-400 text-xs font-black hover:bg-primary-600 hover:text-white transition-all flex items-center gap-2"
-                                        >
-                                            <Activity className="w-4 h-4" />
-                                            SYNC PERFORMANCE
-                                        </button>
+
                                     </div>
                                 </div>
                             )}
+
+                            {(isRunning || lastReport) && (
+                                <div className={`bg-slate-900/60 border ${isRunning ? 'border-emerald-500/30' : 'border-slate-800'} rounded-[2rem] p-6 mb-8 flex items-center justify-between animate-in fade-in slide-in-from-top-4`}>
+                                    <div className="flex items-center gap-6">
+                                        <div className={`p-4 rounded-2xl ${isRunning ? "bg-emerald-500/10 text-emerald-500" : (lastReport?.stopReason.includes("Manual") ? "bg-slate-800 text-slate-400" : "bg-rose-500/10 text-rose-500")}`}>
+                                            {isRunning ? <Play className="w-6 h-6 animate-pulse" /> : (lastReport?.stopReason.includes("Manual") ? <Pause className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />)}
+                                        </div>
+                                        <div>
+                                            <h4 className={`text-xs font-black uppercase tracking-widest ${isRunning ? "text-emerald-500" : "text-slate-500"} mb-1`}>{isRunning ? "CURRENT SESSION" : "LAST SESSION REPORT"}</h4>
+                                            <div className="flex items-center gap-3">
+                                                <h3 className="text-xl font-bold text-white">{isRunning ? "Running..." : lastReport?.stopReason}</h3>
+                                                <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 text-[10px] font-mono">{isRunning ? elapsedTime : lastReport?.durationStr}</span>
+                                            </div>
+                                            {!isRunning && lastReport && <p className="text-xs text-slate-400 mt-1">ended at {new Date(lastReport.endTime).toLocaleTimeString()} on {new Date(lastReport.endTime).toLocaleDateString()}</p>}
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-8 pr-4">
+                                        <div className="text-center">
+                                            <div className="text-2xl font-black text-white">{isRunning ? sessionLikes : lastReport?.actions.likes}</div>
+                                            <div className="text-[9px] font-black uppercase text-slate-500 tracking-wider">Likes</div>
+                                        </div>
+                                        <div className="text-center">
+                                            <div className="text-2xl font-black text-white">{isRunning ? sessionFollows : lastReport?.actions.follows}</div>
+                                            <div className="text-[9px] font-black uppercase text-slate-500 tracking-wider">Follows</div>
+                                        </div>
+                                        <div className="text-center">
+                                            <div className="text-2xl font-black text-white">{isRunning ? sessionUnfollows : lastReport?.actions.unfollows}</div>
+                                            <div className="text-[9px] font-black uppercase text-slate-500 tracking-wider">Unfollows</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* In Development Notice */}
+                            <div className="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-3xl p-6 flex items-center justify-between mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
+                                <div className="flex items-center gap-6">
+                                    <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-400">
+                                        <Zap className="w-6 h-6" />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-black text-indigo-400 uppercase tracking-tight">New Features In Development</h4>
+                                        <p className="text-sm text-slate-400 font-medium">Comments Auto-Pilot, Specific Post Targeting, and Advanced Competitor Analysis are coming soon.</p>
+                                    </div>
+                                </div>
+                                <span className="px-4 py-1.5 bg-indigo-500 text-white text-[10px] font-black uppercase rounded-full shadow-lg shadow-indigo-500/20">
+                                    BETA
+                                </span>
+                            </div>
 
                             {/* Engagement Warning Notice */}
                             {userStats && (userStats.engagementRate === 0 || !userStats.engagementRate) && userStats.analyzedPostsCount > 0 && (
@@ -483,20 +696,7 @@ function Dashboard() {
                                 </div>
                             )}
 
-                            {/* No Data Sync Notice */}
-                            {userStats && (!userStats.analyzedPostsCount || userStats.analyzedPostsCount === 0) && (
-                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-3xl p-6 flex items-center justify-between animate-in fade-in duration-500">
-                                    <div className="flex items-center gap-6">
-                                        <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400">
-                                            <Activity className="w-6 h-6" />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-black text-amber-400 uppercase tracking-tight">Performance Sync Required</h4>
-                                            <p className="text-sm text-slate-400 font-medium">Click "SYNC PERFORMANCE" to calculate your engagement and trust scores.</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
+
 
                             {/* New Stats Row: Engagement & Last Post */}
                             {userStats && userStats.analyzedPostsCount > 0 && (
@@ -507,17 +707,28 @@ function Dashboard() {
                                                 <Clock className="w-8 h-8" />
                                             </div>
                                             <div>
-                                                <p className="text-sm font-black text-primary-500 uppercase tracking-widest mb-1">Content Activity</p>
-                                                <h4 className="text-2xl font-black text-white tracking-tight">
-                                                    {userStats?.latestPosts?.[0]
-                                                        ? `Last post: ${Math.floor((Date.now() / 1000 - userStats.latestPosts[0].timestamp) / 3600)}h ago`
-                                                        : "No recent activity"}
+                                                <p className="text-sm font-black text-primary-500 uppercase tracking-widest mb-4">Content Activity</p>
+                                                <div className="flex items-center gap-8">
+                                                    <div>
+                                                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Last Post</p>
+                                                        <h4 className="text-3xl font-black text-white tracking-tighter">
+                                                            {userStats?.latestPosts?.[0]
+                                                                ? `${Math.floor((Date.now() / 1000 - userStats.latestPosts[0].timestamp) / 3600)}h ago`
+                                                                : "N/A"}
+                                                        </h4>
+                                                    </div>
                                                     {userStats?.latestPosts?.length >= 2 && (
-                                                        <span className="ml-4 text-xs font-bold text-slate-500 bg-slate-800 px-3 py-1 rounded-full border border-slate-700">
-                                                            Avg. Freq: {((userStats.latestPosts[0].timestamp - userStats.latestPosts[userStats.latestPosts.length - 1].timestamp) / 3600 / 24 / userStats.latestPosts.length).toFixed(1)}d
-                                                        </span>
+                                                        <>
+                                                            <div className="w-px h-10 bg-slate-800" />
+                                                            <div>
+                                                                <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Avg Frequency</p>
+                                                                <h4 className="text-3xl font-black text-white tracking-tighter">
+                                                                    {((userStats.latestPosts[0].timestamp - userStats.latestPosts[userStats.latestPosts.length - 1].timestamp) / 3600 / 24 / userStats.latestPosts.length).toFixed(1)} <span className="text-sm text-slate-500 font-bold">days</span>
+                                                                </h4>
+                                                            </div>
+                                                        </>
                                                     )}
-                                                </h4>
+                                                </div>
                                             </div>
                                         </div>
 
@@ -542,26 +753,181 @@ function Dashboard() {
                                 </div>
                             )}
 
-                            <div className="grid grid-cols-3 gap-8">
-                                {authorityStats.filter(s => !s.hidden).map((stat: any, idx) => (
-                                    <div
-                                        key={idx}
-                                        onClick={stat.action}
-                                        className={`bg-slate-900/40 border border-slate-800/50 p-8 rounded-[2.5rem] hover:border-primary-500/30 transition-all duration-500 group ${stat.action ? 'cursor-pointer active:scale-95' : ''}`}
-                                    >
-                                        <div className="flex items-center justify-between mb-6">
-                                            <div className={`p-4 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
-                                                <stat.icon className="w-7 h-7" />
+                            <div className="grid grid-cols-2 gap-8">
+                                {/* Engagement Rate Unified Card */}
+                                <div className={`bg-slate-900/40 border ${isOutdated ? 'border-amber-500/30' : 'border-slate-800/50'} rounded-[2.5rem] p-8 relative overflow-hidden group hover:border-purple-500/30 transition-all duration-500`}>
+                                    <div className="flex items-start justify-between relative z-10 mb-8">
+                                        <div className="flex items-center gap-4">
+                                            <div className="p-4 rounded-2xl bg-slate-950 text-purple-400 group-hover:scale-110 transition-transform duration-500">
+                                                <Activity className="w-7 h-7" />
                                             </div>
-                                            <div
-                                                title={stat.tooltip}
-                                                className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest cursor-help ${stat.trendColor ? stat.trendColor : (stat.trend.startsWith('+') ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-400')}`}
-                                            >
-                                                {stat.trend}
+                                            <div>
+                                                <h3 className="text-slate-500 text-xs font-black uppercase tracking-[0.2em] mb-1">Engagement Rate</h3>
+                                                <p className="text-4xl font-black text-white tracking-tighter">
+                                                    {erValue > 0 ? `${erValue}%` : "—"}
+                                                </p>
                                             </div>
                                         </div>
-                                        <h3 className="text-slate-500 text-xs font-black uppercase tracking-[0.2em] mb-2">{stat.label}</h3>
-                                        <p className="text-4xl font-black text-white tracking-tighter">{stat.value}</p>
+                                        <div className="flex flex-col items-end gap-2">
+                                            {isOutdated ? (
+                                                <div className="px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest bg-amber-500/10 text-amber-400 flex items-center gap-2">
+                                                    <AlertTriangle className="w-3 h-3" /> OUTDATED
+                                                </div>
+                                            ) : (
+                                                <div
+                                                    className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest ${erValue > 0 ? (erValue > 3 ? "bg-purple-500/10 text-purple-400" : "bg-slate-800 text-slate-400") : "bg-slate-900/50 text-slate-600"}`}
+                                                >
+                                                    {erValue > 0 ? (erValue > 3 ? "EXCELLENT" : "REGULAR") : "NO DATA"}
+                                                </div>
+                                            )}
+
+                                            <button
+                                                onClick={async () => {
+                                                    if (isOutdated) {
+                                                        const confirm = window.confirm("This will perform a deep analysis of your current profile. It may take a few seconds. Continue?")
+                                                        if (!confirm) return
+
+                                                        // Force fresh analysis
+                                                        const freshProfile = await refreshUserProfile()
+                                                        if (freshProfile) {
+                                                            await syncStatsToSupabase(freshProfile)
+                                                            setTimeout(() => {
+                                                                alert("Analysis updated & Synced successfully.")
+                                                                loadHistory()
+                                                                // Also update local state to reflect changes immediately
+                                                                // (The useStorage hook might handle this, but forcing a reload ensures it)
+                                                                window.location.reload()
+                                                            }, 1000)
+                                                        } else {
+                                                            alert("Failed to analyze profile. Please try again later.")
+                                                        }
+                                                    } else {
+                                                        setShowEngagementModal(true)
+                                                    }
+                                                }}
+                                                className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${isOutdated ? 'text-amber-500 hover:text-amber-400' : 'text-slate-500 hover:text-white'}`}
+                                            >
+                                                {isOutdated ? "SYNC NOW" : "ANALYSIS"} <ChevronRight className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="h-32 w-full opacity-60 group-hover:opacity-100 transition-opacity relative z-0">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={supabaseHistory.length > 0 ? supabaseHistory : []}>
+                                                <defs>
+                                                    <linearGradient id="colorEngUnified" x1="0" y1="0" x2="0" y2="1">
+                                                        <stop offset="5%" stopColor="#c084fc" stopOpacity={0.3} />
+                                                        <stop offset="95%" stopColor="#c084fc" stopOpacity={0} />
+                                                    </linearGradient>
+                                                </defs>
+                                                <Tooltip
+                                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', fontSize: '12px', color: '#f8fafc' }}
+                                                    itemStyle={{ color: '#c084fc', fontWeight: 'bold' }}
+                                                    labelFormatter={(label, payload) => payload[0]?.payload?.date || ''}
+                                                />
+                                                <Area type="monotone" dataKey="engagementRate" stroke="#c084fc" strokeWidth={3} fillOpacity={1} fill="url(#colorEngUnified)" />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {/* Trust Score Unified Card */}
+                                <div className={`bg-slate-900/40 border ${isOutdated ? 'border-amber-500/30' : 'border-slate-800/50'} rounded-[2.5rem] p-8 relative overflow-hidden group hover:border-blue-500/30 transition-all duration-500`}>
+                                    <div className="flex items-start justify-between relative z-10 mb-8">
+                                        <div className="flex items-center gap-4">
+                                            <div className="p-4 rounded-2xl bg-slate-950 text-blue-500 group-hover:scale-110 transition-transform duration-500">
+                                                <Shield className="w-7 h-7" />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-slate-500 text-xs font-black uppercase tracking-[0.2em] mb-1">Account Trust Score</h3>
+                                                <p className="text-4xl font-black text-white tracking-tighter">
+                                                    {trustValue > 0 ? trustValue : "—"}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-2">
+                                            {isOutdated ? (
+                                                <div className="px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest bg-amber-500/10 text-amber-400 flex items-center gap-2">
+                                                    <AlertTriangle className="w-3 h-3" /> OUTDATED
+                                                </div>
+                                            ) : (
+                                                <div
+                                                    className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest ${trustValue > 0 ? (trustValue > 70 ? "bg-blue-500/10 text-blue-400" : "bg-slate-800 text-slate-400") : "bg-slate-900/50 text-slate-600"}`}
+                                                >
+                                                    {trustValue > 0 ? (trustValue > 70 ? "HIGH TRUST" : "BUILDING") : "NO DATA"}
+                                                </div>
+                                            )}
+
+                                            <button
+                                                onClick={async () => {
+                                                    if (isOutdated) {
+                                                        const confirm = window.confirm("This will refresh your Trust Score analysis. Continue?")
+                                                        if (!confirm) return
+
+                                                        const freshProfile = await refreshUserProfile()
+                                                        if (freshProfile) {
+                                                            await syncStatsToSupabase(freshProfile)
+                                                            setTimeout(() => {
+                                                                alert("Trust Score updated & Synced.")
+                                                                loadHistory()
+                                                                window.location.reload()
+                                                            }, 1000)
+                                                        } else {
+                                                            alert("Failed to refresh profile.")
+                                                        }
+                                                    } else {
+                                                        setShowScoreModal(true)
+                                                    }
+                                                }}
+                                                className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${isOutdated ? 'text-amber-500 hover:text-amber-400' : 'text-slate-500 hover:text-white'}`}
+                                            >
+                                                {isOutdated ? "SYNC NOW" : "DETAILS"} <ChevronRight className="w-3 h-3" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="h-32 w-full opacity-60 group-hover:opacity-100 transition-opacity relative z-0">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={supabaseHistory.length > 0 ? supabaseHistory : []}>
+                                                <defs>
+                                                    <linearGradient id="colorTrustUnified" x1="0" y1="0" x2="0" y2="1">
+                                                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                                                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                                    </linearGradient>
+                                                </defs>
+                                                <Tooltip
+                                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', fontSize: '12px', color: '#f8fafc' }}
+                                                    itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
+                                                    labelFormatter={(label, payload) => payload[0]?.payload?.date || ''}
+                                                />
+                                                <Area type="monotone" dataKey="trustScore" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorTrustUnified)" />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Ratio Stats (Single Row) */}
+                            <div className="grid grid-cols-1">
+                                {authorityStats.filter(s => s.label.includes("Ratio")).map((stat: any, idx) => (
+                                    <div
+                                        key={idx}
+                                        className={`bg-slate-900/40 border border-slate-800/50 p-6 rounded-[2rem] hover:border-amber-500/30 transition-all duration-500 flex items-center justify-between group`}
+                                    >
+                                        <div className="flex items-center gap-4">
+                                            <div className={`p-3 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
+                                                <stat.icon className="w-6 h-6" />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-0.5">{stat.label}</h3>
+                                                <p className="text-2xl font-black text-white tracking-tighter">{stat.value}</p>
+                                            </div>
+                                        </div>
+                                        <div
+                                            title={stat.tooltip}
+                                            className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest cursor-help ${stat.trendColor}`}
+                                        >
+                                            {stat.trend}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -615,8 +981,8 @@ function Dashboard() {
                                     {followerHistory && followerHistory.length > 0 && chartReady ? (
                                         <ResponsiveContainer width="100%" height="100%" minHeight={300}>
                                             <AreaChart
-                                                data={[...followerHistory].reverse().map(item => ({
-                                                    date: new Date(item.timestamp).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }),
+                                                data={supabaseHistory.length > 0 ? supabaseHistory : [...followerHistory].reverse().map(item => ({
+                                                    date: item.date || new Date(item.timestamp).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }),
                                                     followers: item.followers
                                                 }))}
                                                 margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
@@ -642,6 +1008,7 @@ function Dashboard() {
                                                     tickLine={false}
                                                     axisLine={false}
                                                     width={40}
+                                                    domain={['dataMin', 'dataMax']}
                                                     tickFormatter={(value) => value >= 1000 ? `${(value / 1000).toFixed(1)}k` : value}
                                                 />
                                                 <Tooltip
@@ -672,7 +1039,7 @@ function Dashboard() {
 
                             <div className="grid grid-cols-12 gap-8">
                                 <div className="col-span-12 bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
-                                    <h3 className="text-xl font-black tracking-tight mb-8">System Execution Stream</h3>
+                                    <h3 className="text-xl font-black tracking-tight mb-8">Activity Log</h3>
                                     <div className="space-y-4 font-mono text-[11px] overflow-y-auto max-h-[400px] pr-4 custom-scrollbar">
                                         {(logs || []).length > 0 ? (logs || []).map((log: any, i: number) => (
                                             <div key={i} className="flex gap-4 items-start group">
@@ -703,6 +1070,13 @@ function Dashboard() {
                                         Competitor Watchlist
                                     </h3>
                                     <p className="text-slate-400 font-medium mt-1">Add and analyze your niche competitors to steal their growth strategies.</p>
+                                    <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
+                                        <span className="relative flex h-2 w-2">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                                        </span>
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Advanced features in development</span>
+                                    </div>
                                 </div>
                                 <div className="flex items-center gap-4 bg-slate-950 p-4 rounded-3xl border border-slate-800 focus-within:border-primary-500 transition-all">
                                     <Search className="w-5 h-5 text-slate-500" />
@@ -888,7 +1262,7 @@ function Dashboard() {
                                     <div>
                                         <h3 className="text-2xl font-black tracking-tight flex items-center gap-3">
                                             <Shield className="w-6 h-6 text-rose-500" />
-                                            Deep Scan Engine
+                                            Deep Scan Bot
                                         </h3>
                                         <p className="text-sm text-slate-500 font-medium">Analyze your audience to find who stopped following you.</p>
                                     </div>
@@ -964,7 +1338,7 @@ function Dashboard() {
                                             { id: "likeEnabled", label: "Automated Likes", icon: Heart, color: "text-rose-400" },
                                             { id: "followEnabled", label: "Smart Follow", icon: UserPlus, color: "text-blue-400" },
                                             { id: "unfollowEnabled", label: "Auto-Unfollow (Clean)", icon: Trash2, color: "text-amber-400" },
-                                            { id: "dmEnabled", label: "Messenger Auto-Pilot", icon: MessageSquare, color: "text-emerald-400" }
+                                            { id: "dmEnabled", label: "Comments Auto-Pilot (Dev)", icon: MessageSquare, color: "text-emerald-400" }
                                         ].map(item => (
                                             <button
                                                 key={item.id}
@@ -979,6 +1353,7 @@ function Dashboard() {
                                                     <span className="font-bold text-white">{item.label}</span>
                                                 </div>
                                                 {config[item.id] ? <CheckCircle2 className="w-6 h-6 text-primary-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
+                                                {item.label.includes("(Dev)") && <span className="absolute top-2 right-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-500 text-[8px] font-bold rounded uppercase">In Dev</span>}
                                             </button>
                                         ))}
                                     </div>
@@ -989,7 +1364,8 @@ function Dashboard() {
                                     <div className="space-y-4">
                                         {[
                                             { id: "sourceHashtags", label: "Monitor Hashtags", icon: Search, color: "text-indigo-400" },
-                                            { id: "sourceCompetitors", label: "Target Competitors", icon: Zap, color: "text-primary-400" }
+                                            { id: "sourceCompetitors", label: "Target Competitors", icon: Zap, color: "text-primary-400" },
+                                            { id: "sourcePosts", label: "Specific Posts Analysis (Dev)", icon: Heart, color: "text-rose-400" }
                                         ].map(sourceItem => (
                                             <button
                                                 key={sourceItem.id}
@@ -1058,93 +1434,175 @@ function Dashboard() {
                                         </div>
                                     </div>
                                 )}
+
+                                {config.sourcePosts && (
+                                    <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-12 animate-in fade-in slide-in-from-right-8 duration-500 col-span-2">
+                                        <h3 className="text-xl font-black text-white tracking-tight mb-6 flex items-center gap-3">
+                                            <div className="w-2 h-6 bg-rose-500 rounded-full" />
+                                            Target Specific Posts (Development Preview)
+                                        </h3>
+                                        <div className="p-8 bg-slate-950/50 border border-slate-800 rounded-[2rem] flex flex-col items-center justify-center text-center py-16">
+                                            <div className="p-4 rounded-full bg-slate-900 mb-4 text-slate-700">
+                                                <Heart className="w-8 h-8" />
+                                            </div>
+                                            <h4 className="text-lg font-black text-white mb-2">Feature Under Construction</h4>
+                                            <p className="text-slate-500 max-w-md">Soon you will be able to paste a specific post URL here, and the bot will engage with users who liked or commented on that exact post.</p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
 
                     {activeTab === "settings" && (
-                        <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700 max-w-6xl">
+                        <div className="space-y-12 pb-24 max-w-6xl">
 
-                            {/* New Chaotic Behavior Section */}
-                            <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-purple-500/30 transition-all group">
-                                <div className="flex items-center justify-between mb-8">
-                                    <div className="flex items-center gap-4">
-                                        <div className="p-4 bg-purple-500/20 rounded-2xl text-purple-400">
-                                            <Activity className="w-8 h-8" />
+
+                            {/* Overlay & Maintenance Section */}
+                            <div className="grid grid-cols-2 gap-8">
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-indigo-500/30 transition-all group">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className="p-4 bg-indigo-500/20 rounded-2xl text-indigo-400">
+                                                <Monitor className="w-8 h-8" />
+                                            </div>
+                                            <div>
+                                                <h2 className="text-2xl font-black text-white tracking-tight">Show Overlay</h2>
+                                                <p className="text-sm text-slate-500 font-medium">Displays the bot status window on Instagram.</p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <h2 className="text-2xl font-black text-white tracking-tight">Chaotic Behavior</h2>
-                                            <p className="text-sm text-slate-500 font-medium">Simulates random human browsing to confuse algorithms.</p>
-                                        </div>
+                                        <button
+                                            onClick={() => setConfig({ ...config, overlayEnabled: !config?.overlayEnabled })}
+                                            className={`flex items-center gap-3 px-6 py-3 rounded-xl font-bold transition-all ${config?.overlayEnabled
+                                                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
+                                                : "bg-slate-800 text-slate-400"
+                                                }`}
+                                        >
+                                            {config?.overlayEnabled ? "ENABLED" : "DISABLED"}
+                                            <div className={`w-3 h-3 rounded-full ${config?.overlayEnabled ? "bg-white" : "bg-slate-600"}`} />
+                                        </button>
                                     </div>
-                                    <button
-                                        onClick={() => setConfig({ ...config, chaosEnabled: !config.chaosEnabled })}
-                                        className={`flex items-center gap-3 px-6 py-3 rounded-xl font-bold transition-all ${config.chaosEnabled
-                                            ? "bg-purple-600 text-white shadow-lg shadow-purple-600/20"
-                                            : "bg-slate-800 text-slate-400"
-                                            }`}
-                                    >
-                                        {config.chaosEnabled ? "ENABLED" : "DISABLED"}
-                                        <div className={`w-3 h-3 rounded-full ${config.chaosEnabled ? "bg-white" : "bg-slate-600"}`} />
-                                    </button>
                                 </div>
 
-                                {config.chaosEnabled && (
-                                    <div className="grid grid-cols-2 gap-8 animate-in fade-in slide-in-from-top-4 duration-500">
-                                        <div>
-                                            <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Frequency (Every X min)</label>
-                                            <input
-                                                type="number"
-                                                value={delays.chaosFreq || 30}
-                                                onChange={(e) => setDelays({ ...delays, chaosFreq: parseInt(e.target.value) || 0 })}
-                                                className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-purple-500 outline-none transition-all"
-                                            />
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-purple-500/30 transition-all group">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className="p-4 bg-purple-500/20 rounded-2xl text-purple-400">
+                                                <Activity className="w-8 h-8" />
+                                            </div>
+                                            <div>
+                                                <h2 className="text-2xl font-black text-white tracking-tight">Chaotic Behavior</h2>
+                                                <p className="text-sm text-slate-500 font-medium">Simulates human browsing.</p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Duration (For X min)</label>
-                                            <input
-                                                type="number"
-                                                value={delays.chaosDur || 5}
-                                                onChange={(e) => setDelays({ ...delays, chaosDur: parseInt(e.target.value) || 0 })}
-                                                className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-purple-500 outline-none transition-all"
-                                            />
-                                        </div>
+                                        <button
+                                            onClick={() => setConfig({ ...config, chaosEnabled: !config?.chaosEnabled })}
+                                            className={`flex items-center gap-3 px-6 py-3 rounded-xl font-bold transition-all ${config?.chaosEnabled
+                                                ? "bg-purple-600 text-white shadow-lg shadow-purple-600/20"
+                                                : "bg-slate-800 text-slate-400"
+                                                }`}
+                                        >
+                                            {config?.chaosEnabled ? "ENABLED" : "DISABLED"}
+                                            <div className={`w-3 h-3 rounded-full ${config?.chaosEnabled ? "bg-white" : "bg-slate-600"}`} />
+                                        </button>
                                     </div>
-                                )}
-                            </div>
-
-                            {/* Continuous Session Section */}
-                            <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-emerald-500/30 transition-all group">
-                                <div className="flex items-center justify-between mb-8">
-                                    <div className="flex items-center gap-4">
-                                        <div className="p-4 bg-emerald-500/20 rounded-2xl text-emerald-400">
-                                            <Clock className="w-8 h-8" />
-                                        </div>
-                                        <div>
-                                            <h2 className="text-2xl font-black text-white tracking-tight">Sesión Continua</h2>
-                                            <p className="text-sm text-slate-500 font-medium">El bot no se detiene al completar tareas. Reinicia automáticamente cada día.</p>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={() => setConfig({ ...config, continuousSession: !config.continuousSession })}
-                                        className={`flex items-center gap-3 px-6 py-3 rounded-xl font-bold transition-all ${config.continuousSession
-                                            ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20"
-                                            : "bg-slate-800 text-slate-400"
-                                            }`}
-                                    >
-                                        {config.continuousSession ? "ACTIVADO" : "DESACTIVADO"}
-                                        <div className={`w-3 h-3 rounded-full ${config.continuousSession ? "bg-white" : "bg-slate-600"}`} />
-                                    </button>
                                 </div>
-
-                                {config.continuousSession && (
-                                    <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-6 animate-in fade-in slide-in-from-top-4 duration-500">
-                                        <p className="text-sm text-emerald-400 font-medium">
-                                            ✅ Modo continuo activo. El bot trabajará durante todo el día y reiniciará sesiones automáticamente al día siguiente.
-                                        </p>
-                                    </div>
-                                )}
                             </div>
+
+                            {/* Continuous Session & Sleep Section */}
+                            <div className="grid grid-cols-1 gap-8">
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 hover:border-emerald-500/30 transition-all group">
+                                    <div className="flex items-center justify-between mb-8">
+                                        <div className="flex items-center gap-4">
+                                            <div className="p-4 bg-emerald-500/20 rounded-2xl text-emerald-400">
+                                                <Clock className="w-8 h-8" />
+                                            </div>
+                                            <div>
+                                                <h2 className="text-2xl font-black text-white tracking-tight">Sesión Continua</h2>
+                                                <p className="text-sm text-slate-500 font-medium">El bot no se detiene al completar tareas. Reinicia automáticamente cada día.</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => setConfig({ ...config, continuousSession: !config?.continuousSession })}
+                                            className={`flex items-center gap-3 px-6 py-3 rounded-xl font-bold transition-all ${config?.continuousSession
+                                                ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/20"
+                                                : "bg-slate-800 text-slate-400"
+                                                }`}
+                                        >
+                                            {config?.continuousSession ? "ACTIVADO" : "DESACTIVADO"}
+                                            <div className={`w-3 h-3 rounded-full ${config?.continuousSession ? "bg-white" : "bg-slate-600"}`} />
+                                        </button>
+                                    </div>
+
+                                    {config.continuousSession && (
+                                        <div className="space-y-8 animate-in fade-in slide-in-from-top-4 duration-500 border-t border-slate-800/50 pt-8 mt-8">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="p-3 bg-indigo-500/20 rounded-xl text-indigo-400">
+                                                        <Moon className="w-6 h-6" />
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="text-lg font-black text-white">Modo Dormir (Simulación Humana)</h3>
+                                                        <p className="text-xs text-slate-500">Define una ventana de tiempo donde el bot descansará.</p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => setConfig({ ...config, sleepEnabled: !config.sleepEnabled })}
+                                                    className={`px-6 py-2 rounded-xl font-bold text-xs transition-all ${config?.sleepEnabled ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-500"}`}
+                                                >
+                                                    {config?.sleepEnabled ? "ACTIVO" : "INACTIVO"}
+                                                </button>
+                                            </div>
+
+                                            {config.sleepEnabled && (
+                                                <div className="grid grid-cols-2 gap-8 bg-slate-950/50 p-6 rounded-[2rem] border border-slate-800">
+                                                    <div>
+                                                        <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Hora de Inicio (24h)</label>
+                                                        <input
+                                                            type="time"
+                                                            value={config.sleepStart}
+                                                            onChange={(e) => setConfig({ ...config, sleepStart: e.target.value })}
+                                                            className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-white font-bold outline-none focus:border-indigo-500"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Duración (Horas)</label>
+                                                        <input
+                                                            type="number"
+                                                            value={config.sleepDuration}
+                                                            onChange={(e) => setConfig({ ...config, sleepDuration: parseInt(e.target.value) || 0 })}
+                                                            className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-white font-bold outline-none focus:border-indigo-500"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {config.chaosEnabled && (
+                                <div className="grid grid-cols-2 gap-8 animate-in fade-in slide-in-from-top-4 duration-500">
+                                    <div>
+                                        <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Frequency (Every X min)</label>
+                                        <input
+                                            type="number"
+                                            value={delays?.chaosFreq || 30}
+                                            onChange={(e) => setDelays({ ...delays, chaosFreq: parseInt(e.target.value) || 0 })}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-purple-500 outline-none transition-all"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Duration (For X min)</label>
+                                        <input
+                                            type="number"
+                                            value={delays?.chaosDur || 5}
+                                            onChange={(e) => setDelays({ ...delays, chaosDur: parseInt(e.target.value) || 0 })}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-purple-500 outline-none transition-all"
+                                        />
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="flex items-center gap-4 mb-4 pt-8 border-t border-slate-800/50">
                                 <div className="p-4 bg-indigo-500/20 rounded-2xl text-indigo-400">
@@ -1179,7 +1637,7 @@ function Dashboard() {
                                                 <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Min Floor (s)</label>
                                                 <input
                                                     type="number"
-                                                    value={delays[`${item.id}Min`]}
+                                                    value={delays?.[`${item.id}Min`] || 0}
                                                     onChange={(e) => setDelays({ ...delays, [`${item.id}Min`]: parseInt(e.target.value) || 0 })}
                                                     className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-indigo-500 outline-none transition-all shadow-inner"
                                                 />
@@ -1188,7 +1646,7 @@ function Dashboard() {
                                                 <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Max Ceiling (s)</label>
                                                 <input
                                                     type="number"
-                                                    value={delays[`${item.id}Max`]}
+                                                    value={delays?.[`${item.id}Max`] || 0}
                                                     onChange={(e) => setDelays({ ...delays, [`${item.id}Max`]: parseInt(e.target.value) || 0 })}
                                                     className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-indigo-500 outline-none transition-all shadow-inner"
                                                 />
@@ -1222,7 +1680,7 @@ function Dashboard() {
                                         </div>
                                         <input
                                             type="number"
-                                            value={delays.batchLimit}
+                                            value={delays?.batchLimit || 0}
                                             onChange={(e) => setDelays({ ...delays, batchLimit: parseInt(e.target.value) || 0 })}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-rose-500 outline-none transition-all shadow-inner"
                                         />
@@ -1240,7 +1698,7 @@ function Dashboard() {
                                         </div>
                                         <input
                                             type="number"
-                                            value={delays.batchPause}
+                                            value={delays?.batchPause || 0}
                                             onChange={(e) => setDelays({ ...delays, batchPause: parseInt(e.target.value) || 0 })}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-rose-500 outline-none transition-all shadow-inner"
                                         />
@@ -1260,7 +1718,7 @@ function Dashboard() {
                                         </div>
                                         <input
                                             type="number"
-                                            value={delays.sessionLikeLimit || 100}
+                                            value={delays?.sessionLikeLimit || 100}
                                             onChange={(e) => setDelays({ ...delays, sessionLikeLimit: parseInt(e.target.value) || 0 })}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-rose-500 outline-none transition-all shadow-inner"
                                         />
@@ -1278,10 +1736,26 @@ function Dashboard() {
                                         </div>
                                         <input
                                             type="number"
-                                            value={delays.sessionFollowLimit || 100}
+                                            value={delays?.sessionFollowLimit || 100}
                                             onChange={(e) => setDelays({ ...delays, sessionFollowLimit: parseInt(e.target.value) || 0 })}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-rose-500 outline-none transition-all shadow-inner"
                                         />
+                                    </div>
+
+                                    {/* Visual Feedback Toggle */}
+                                    <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-emerald-500/30 transition-all group col-span-2">
+                                        <div className="flex justify-between items-center mb-6">
+                                            <div>
+                                                <h3 className="text-sm font-black text-white group-hover:text-emerald-400 transition-colors uppercase tracking-[0.2em] mb-2">Live Status Overlay</h3>
+                                                <p className="text-xs text-slate-500 font-medium">Show real-time logs and stats on the Instagram tab while running.</p>
+                                            </div>
+                                            <button
+                                                onClick={() => setConfig({ ...config, overlayEnabled: !(config.overlayEnabled !== false) })}
+                                                className={`w-14 h-8 rounded-full p-1 transition-colors ${config.overlayEnabled !== false ? "bg-emerald-500" : "bg-slate-800"}`}
+                                            >
+                                                <div className={`w-6 h-6 rounded-full bg-white shadow-lg transition-transform ${config.overlayEnabled !== false ? "translate-x-6" : ""}`} />
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1367,7 +1841,11 @@ function Dashboard() {
                                                     </td>
                                                     <td className="px-10 py-6">
                                                         <div className="flex items-center gap-3">
-                                                            {isReady ? (
+                                                            {user.unfollowFailed ? (
+                                                                <span className="px-4 py-1.5 bg-rose-500/10 text-rose-400 rounded-full text-[10px] font-black tracking-widest border border-rose-500/20">
+                                                                    UNFOLLOW FAILED
+                                                                </span>
+                                                            ) : isReady ? (
                                                                 <span className="px-4 py-1.5 bg-amber-500/10 text-amber-400 rounded-full text-[10px] font-black tracking-widest border border-amber-500/20">
                                                                     READY TO UNFOLLOW
                                                                 </span>
@@ -1382,6 +1860,18 @@ function Dashboard() {
                                                                 title={user.protected ? "Protected from Unfollow" : "Don't unfollow this user"}
                                                             >
                                                                 <Shield className={`w-4 h-4 ${user.protected ? 'fill-current' : ''}`} />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (window.confirm(`Remove @${user.username} from database?`)) {
+                                                                        const updated = followedUsers.filter((u: any) => u.username !== user.username)
+                                                                        setFollowedUsers(updated)
+                                                                    }
+                                                                }}
+                                                                className="p-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-500 hover:bg-rose-500/10 hover:border-rose-500/50 hover:text-rose-500 transition-all"
+                                                                title="Remove from database"
+                                                            >
+                                                                <Trash2 className="w-4 h-4" />
                                                             </button>
                                                         </div>
                                                     </td>
@@ -1413,15 +1903,14 @@ function Dashboard() {
                     )}
                 </div>
 
-                <a
-                    href="https://docs.google.com/document/d/1U_kTVZbGKAv9jW4D3sy9rt-cnqK1_Lx5HHAZPcSXBBY/edit?tab=t.0"
-                    target="_blank"
+                <button
+                    onClick={() => setShowFeedbackModal(true)}
                     className="fixed bottom-8 right-8 z-50 bg-slate-900/90 backdrop-blur-md border border-slate-700 text-white px-6 py-3 rounded-full shadow-2xl hover:bg-primary-600 hover:border-primary-500 transition-all duration-300 hover:-translate-y-1 font-black text-xs tracking-widest uppercase flex items-center gap-3 group"
                 >
                     <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse group-hover:bg-white" />
                     Sugerencias
-                    <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-white" />
-                </a>
+                    <MessageSquare className="w-3 h-3 text-slate-400 group-hover:text-white" />
+                </button>
 
                 {/* Score Explanation Modal */}
                 {
@@ -1509,8 +1998,7 @@ function Dashboard() {
                                 </div>
                             </div>
                         </div>
-                    )
-                }
+                    )}
 
                 {
                     showEngagementModal && (
@@ -1631,10 +2119,64 @@ function Dashboard() {
                                 </div>
                             </div>
                         </div>
-                    )
-                }
-            </main>
-        </div>
+                    )}
+
+
+                {/* Feedback Modal */}
+                {
+                    showFeedbackModal && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-8 backdrop-blur-md bg-black/60 animate-in fade-in duration-300">
+                            <div className="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+                                <div className="p-8 border-b border-slate-800 flex items-center justify-between bg-gradient-to-r from-emerald-900/20 to-transparent">
+                                    <div>
+                                        <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-3">
+                                            <MessageSquare className="w-5 h-5 text-emerald-400" />
+                                            Buzón de Sugerencias
+                                        </h2>
+                                        <p className="text-sm text-slate-400 font-medium mt-1">Ayúdanos a mejorar SocialRadar</p>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowFeedbackModal(false)}
+                                        className="p-3 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition-all"
+                                    >
+                                        <X className="w-5 h-5" />
+                                    </button>
+                                </div>
+                                <div className="p-8 space-y-6">
+                                    <textarea
+                                        className="w-full h-32 bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white text-sm font-medium focus:border-emerald-500 outline-none resize-none transition-all placeholder:text-slate-600"
+                                        placeholder="Cuéntanos tu idea, reporta un error, o dinos qué te gustaría ver en la próxima versión..."
+                                        value={feedbackMessage}
+                                        onChange={(e) => setFeedbackMessage(e.target.value)}
+                                        autoFocus
+                                    />
+                                    <div className="flex justify-end gap-3">
+                                        <button
+                                            onClick={() => setShowFeedbackModal(false)}
+                                            className="px-6 py-3 rounded-xl font-bold text-slate-400 hover:text-white transition-colors text-xs uppercase tracking-wider"
+                                        >
+                                            Cancelar
+                                        </button>
+                                        <button
+                                            onClick={submitFeedback}
+                                            disabled={!feedbackMessage.trim() || isSubmittingFeedback}
+                                            className={`px-8 py-3 rounded-xl bg-emerald-600 text-white font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-600/20 hover:bg-emerald-500 transition-all flex items-center gap-2 ${(!feedbackMessage.trim() || isSubmittingFeedback) ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105 active:scale-95'}`}
+                                        >
+                                            {isSubmittingFeedback ? (
+                                                <>Enviando...</>
+                                            ) : (
+                                                <>
+                                                    Enviar <Send className="w-3 h-3" />
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+            </main >
+        </div >
     )
 }
 

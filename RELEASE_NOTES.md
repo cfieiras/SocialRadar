@@ -1,3 +1,53 @@
+# SocialRadar - Version 1.1.9 (Multi-Account & Stabilization)
+Date: 2026-02-16
+
+## Milestone Summary
+This major update introduces full multi-account support, allowing the bot to operate independently across different Instagram profiles with complete data isolation and dynamic context switching.
+
+## Key Features
+
+### 1. Robust Multi-Account Support
+- **Data Isolation**: All configurations, statistics, logs, and target lists are now stored with an account-prefixed key, preventing data leakage between profiles.
+- **Dynamic Switcher**: The bot engine now detects when you change accounts in the Instagram UI and immediately reloads the corresponding settings and HUD.
+
+### 2. Enhanced Mission HUD
+- **Active Account Indicator**: The status overlay now displays which @username the bot is currently managing.
+- **Current Target Display**: Real-time feedback on the specific hashtag or competitor being processed in the current mission.
+
+### 3. Stability & Engine Polish
+- **Storage Watcher Refactor**: Re-engineered the state management listeners to handle dynamic keys reliably.
+- **Improved Account Detection**: Hybrid detection (Storage + DOM) ensures the bot always knows who is logged in, even after session timeouts or reloads.
+
+---
+
+# SocialRadar - Version 1.1.8 (Compliance & Polish)
+Date: 2026-01-29
+
+## Milestone Summary
+This release focuses on user onboarding, legal compliance, and branding. We've introduced a mandatory "Terms of Service" acceptance flow and updated the visual identity of the extension.
+
+## Key Features
+
+### 1. Onboarding & Compliance
+- **Mandatory Terms of Service**: New users are now presented with a dedicated onboarding tab upon installation.
+- **Scroll-to-Accept**: The "Accept & Install" button remains disabled until the user scrolls to the bottom of the terms, ensuring compliance.
+- **Blocker Screen**: The extension popup is gated behind the acceptance of terms.
+- **Auto-Redirect**: Users are automatically redirected to the dashboard after accepting terms.
+
+### 2. Visual Identity
+- **New Iconography**: Updated the extension icon to the new "SocialRadar" branding.
+- **Consistent Branding**: Aligned logos across the dashboard, popup, and onboarding screens.
+
+### 3. Landing Page Integration
+- **Dynamic Versioning**: The landing page now automatically fetches the latest version number from our central manifest.
+- **Smart Download Links**: The "Download" button automatically generates the correct link to the latest zip file (e.g., `SocialRadar-v1.1.8.zip`), ensuring users always get the newest release.
+
+### 4. Live Status Overlay (HUD) - *Previously in Beta*
+- **Real-time Feedback**: A dashboard overlay now appears on the Instagram tab when the bot is running.
+- **Visual Logs**: A scrolling terminal on the overlay shows exactly what the bot is doing in real-time.
+
+---
+
 # SocialRadar - Version 1.1.7
 Date: 2026-01-22
 
@@ -56,9 +106,3 @@ It includes a complete Dashboard UI, robust automation logic, and advanced human
 - **Engine**: TypeScript + Plasmo Framework (Chrome MV3).
 - **State Management**: Persisted via `@plasmohq/storage`.
 - **Git Tag**: `v1.0.0`
-
-## How to Restore
-To return to this state, checkout the git tag:
-```bash
-git checkout v1.0.0
-```

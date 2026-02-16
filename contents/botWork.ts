@@ -22,12 +22,26 @@ interface LogEntry {
     type: "success" | "info" | "warning" | "wait"
 }
 
+export interface LastSessionReport {
+    startTime: number
+    endTime: number
+    durationStr: string
+    actions: {
+        follows: number
+        likes: number
+        dms: number
+        unfollows: number
+    }
+    stopReason: string
+}
+
 interface FollowedUser {
     username: string
     url: string
     timestamp: number
     dateStr: string
     protected?: boolean
+    unfollowFailed?: boolean // Tracks if we couldn't unfollow (e.g. button hidden/error)
 }
 
 class InstagramBot {
@@ -38,10 +52,48 @@ class InstagramBot {
     private followedUsers: FollowedUser[] = []
     private processedHistory: string[] = []
 
+    private activeUsername: string = "global"
+
+    private pKey(key: string): string {
+        // Only prefix account-specific data
+        const accountSpecific = [
+            "botConfig", "delays", "stats", "logs", "followedUsers",
+            "targetHashtags", "targetCompetitors", "competitorsData",
+            "lastSessionReport", "followerHistory", "sessionLikes",
+            "sessionFollows", "sessionUnfollows", "processedHistory"
+        ]
+        if (accountSpecific.includes(key)) {
+            return `${this.activeUsername}_${key}`
+        }
+        return key
+    }
+
+    private async syncActiveUsername() {
+        // 1. Try to get from storage (trusted source from Dashboard/Previous Scrapes)
+        const stats = await storage.get<any>("currentUserStats")
+
+        // 2. Try to verify from DOM (Current actual logged in user)
+        // Instagram usually has the username in the profile link in the sidebar or header
+        const sidebarProfileLink = document.querySelector('a[href^="/"][href$="/"] img[alt*="profile"]')?.parentElement as HTMLAnchorElement
+        const domUsername = sidebarProfileLink?.getAttribute('href')?.replace(/\//g, '') ||
+            document.querySelector('header h2')?.textContent?.trim()
+
+        const newUsername = domUsername || stats?.username || "global"
+
+        if (newUsername !== this.activeUsername) {
+            console.log(`GrowthBot: Context Change -> ${this.activeUsername} to ${newUsername}`)
+            this.activeUsername = newUsername
+            return true
+        }
+        return false
+    }
+
     private sessionEngagedProfiles: Set<string> = new Set()
+    private currentMission: string = "Pending..."
     private currentSessionActions: number = 0
     private sessionLikes: number = 0
     private sessionFollows: number = 0
+    private sessionUnfollows: number = 0
     private capturedGraphQLData: any[] = []
 
     private config: any = {
@@ -52,7 +104,11 @@ class InstagramBot {
         sourceHashtags: true,
         sourceCompetitors: false,
         chaosEnabled: false,
-        continuousSession: false
+        continuousSession: false,
+        overlayEnabled: true,
+        sleepEnabled: false,
+        sleepStart: "23:00",
+        sleepDuration: 8
     }
 
     private delayConfig: any = {
@@ -72,6 +128,90 @@ class InstagramBot {
         this.init()
     }
 
+    private isInternalStop = false
+
+    private async stopBot(reason: string) {
+        this.isInternalStop = true
+        await this.generateReport(reason)
+        await storage.set("isRunning", false)
+        this.active = false
+        this._loopRunning = false
+    }
+
+    private async generateReport(reason: string) {
+        const end = Date.now()
+        const durationMs = end - this.sessionStart
+        const h = Math.floor(durationMs / 3600000).toString().padStart(2, '0')
+        const m = Math.floor((durationMs % 3600000) / 60000).toString().padStart(2, '0')
+        const s = Math.floor((durationMs % 60000) / 1000).toString().padStart(2, '0')
+
+        const report = {
+            date: new Date().toLocaleDateString(),
+            time: new Date().toLocaleTimeString(),
+            startTime: this.sessionStart,
+            endTime: end,
+            durationStr: `${h}:${m}:${s}`,
+            actions: {
+                likes: this.sessionLikes,
+                follows: this.sessionFollows,
+                unfollows: this.sessionUnfollows,
+                dms: 0
+            },
+            stopReason: reason
+        }
+
+        await storage.set(this.pKey("lastSessionReport"), report)
+        this.showTerminationOverlay(report)
+    }
+
+    private showTerminationOverlay(report: any) {
+        let overlay = document.getElementById('sr-status-overlay')
+        if (!overlay) {
+            this.createStatusOverlay()
+            overlay = document.getElementById('sr-status-overlay')
+        }
+        if (!overlay) return
+
+        overlay.innerHTML = `
+            <div style="width: 100%; max-width: 500px; padding: 32px; background: rgba(15, 23, 42, 0.95); border-radius: 24px; border: 1px solid rgba(148, 163, 184, 0.2); text-align: center; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);">
+                <div style="width: 48px; height: 48px; background: rgba(244, 63, 94, 0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px auto;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                </div>
+                <h2 style="font-size: 20px; font-weight: 900; color: #fff; margin-bottom: 4px; letter-spacing: -0.02em;">SESSION ENDED</h2>
+                <p style="font-size: 14px; font-weight: 500; color: #94a3b8; margin-bottom: 24px;">${report.stopReason}</p>
+                
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 24px;">
+                    <div style="background: rgba(30, 41, 59, 0.5); padding: 12px; border-radius: 12px;">
+                        <div style="font-size: 18px; font-weight: 800; color: #f43f5e;">${report.actions.likes}</div>
+                        <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Likes</div>
+                    </div>
+                    <div style="background: rgba(30, 41, 59, 0.5); padding: 12px; border-radius: 12px;">
+                        <div style="font-size: 18px; font-weight: 800; color: #3b82f6;">${report.actions.follows}</div>
+                        <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Follows</div>
+                    </div>
+                    <div style="background: rgba(30, 41, 59, 0.5); padding: 12px; border-radius: 12px;">
+                        <div style="font-size: 18px; font-weight: 800; color: #fbbf24;">${report.actions.unfollows}</div>
+                        <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Unfollows</div>
+                    </div>
+                    <div style="background: rgba(30, 41, 59, 0.5); padding: 12px; border-radius: 12px;">
+                        <div style="font-size: 18px; font-weight: 800; color: #e2e8f0;">${report.durationStr}</div>
+                        <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Duration</div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                     <button id="sr-close-overlay" style="background: #fff; color: #0f172a; border: none; padding: 12px 24px; border-radius: 12px; font-size: 14px; font-weight: 700; cursor: pointer; transition: transform 0.1s;">Close Report</button>
+                </div>
+            </div>
+        `
+
+        if (this.uiInterval) clearInterval(this.uiInterval)
+
+        document.getElementById('sr-close-overlay')?.addEventListener('click', () => {
+            this.removeStatusOverlay()
+        })
+    }
+
     async init() {
         try {
             console.log("GrowthBot: Engine Started")
@@ -83,15 +223,21 @@ class InstagramBot {
                 }
             })
 
-            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors] = await Promise.all([
-                storage.get("botConfig"),
-                storage.get("delays"),
-                storage.get<BotStats>("stats"),
-                storage.get<LogEntry[]>("logs"),
-                storage.get<FollowedUser[]>("followedUsers"),
-                storage.get<string[]>("processedHistory"),
-                storage.get<string[]>("targetHashtags"),
-                storage.get<string[]>("targetCompetitors")
+            await this.syncActiveUsername()
+
+            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedStartTime, sLikes, sFollows, sUnfollows] = await Promise.all([
+                storage.get(this.pKey("botConfig")),
+                storage.get(this.pKey("delays")),
+                storage.get<BotStats>(this.pKey("stats")),
+                storage.get<LogEntry[]>(this.pKey("logs")),
+                storage.get<FollowedUser[]>(this.pKey("followedUsers")),
+                storage.get<string[]>(this.pKey("processedHistory")),
+                storage.get<string[]>(this.pKey("targetHashtags")),
+                storage.get<string[]>(this.pKey("targetCompetitors")),
+                storage.get<number>("botStartTime"),
+                storage.get<number>(this.pKey("sessionLikes")),
+                storage.get<number>(this.pKey("sessionFollows")),
+                storage.get<number>(this.pKey("sessionUnfollows"))
             ])
 
             if (savedConfig) this.config = savedConfig
@@ -100,17 +246,23 @@ class InstagramBot {
             if (savedLogs) this.logs = savedLogs
             if (savedFollows) this.followedUsers = savedFollows
             if (savedHistory) this.processedHistory = (savedHistory || []).map(h => h.toLowerCase())
+            if (savedStartTime) this.sessionStart = savedStartTime // Synced start time
+            if (sLikes) this.sessionLikes = sLikes
+            if (sFollows) this.sessionFollows = sFollows
+            if (sUnfollows) this.sessionUnfollows = sUnfollows
 
             // Initialize defaults if missing
-            if (!savedHashtags) await storage.set("targetHashtags", ["#digitalart", "#photography"])
-            if (!savedCompetitors) await storage.set("targetCompetitors", ["@cristiano"])
+            if (!savedHashtags) await storage.set(this.pKey("targetHashtags"), ["#digitalart"])
+            if (!savedCompetitors) await storage.set(this.pKey("targetCompetitors"), ["@leomessi"])
 
             this.listenToToggles()
 
             // --- FORCED AUDIT CHECK ---
-            // If the URL has ?audit=true, run the analysis even if the bot is not "Running"
-            const isAudit = new URLSearchParams(window.location.search).get('audit') === 'true'
+            // If the URL has ?audit=true or ?start_audit=true, run the analysis even if the bot is not "Running"
+            const params = new URLSearchParams(window.location.search)
+            const isAudit = params.get('audit') === 'true' || params.get('start_audit') === 'true'
             if (isAudit) {
+                this.showAuditOverlay()
                 this.addLog("⚡ Manual Audit Triggered. Intercepting Network...", "info")
                 setTimeout(() => this.analyzeOwnProfile(), 2000)
             }
@@ -122,40 +274,126 @@ class InstagramBot {
         this.active = !!isRunning
         if (this.active) {
             this.addLog("Bot initialized and running", "success")
+            this.createStatusOverlay()
             this.runLoop()
         }
 
         try {
-            storage.watch({
-                "isRunning": async (c) => {
-                    const wasActive = this.active
-                    this.active = !!c.newValue
+            // Use chrome.storage.onChanged for robust catch-all watching of prefixed keys
+            chrome.storage.onChanged.addListener(async (changes, areaName) => {
+                if (areaName !== 'local') return
 
-                    if (this.active && !wasActive) {
-                        this.addLog(">>> ENGINE LAUNCHED: Automation Online", "success")
-                        const conf = await storage.get("botConfig")
-                        const del = await storage.get("delays")
-                        if (conf) this.config = conf
-                        if (del) this.delayConfig = del
-                        await storage.set("lastNavTime", 0)
-                        await storage.set("botStartTime", Date.now())
-                        this.currentSessionActions = 0
-                        this.sessionLikes = 0
-                        this.sessionFollows = 0
-                        this.sessionEngagedProfiles.clear()
-                        this.runLoop()
-                    } else if (!this.active && wasActive) {
-                        this.addLog("<<< ENGINE STOPPED: Automation Offline", "warning")
-                        await storage.remove("botStartTime")
+                // 1. Handle Account Switch
+                if (changes["currentUserStats"]) {
+                    const stats = changes["currentUserStats"].newValue
+                    if (stats?.username && stats.username !== this.activeUsername) {
+                        console.log(`GrowthBot: Account switch detected -> ${stats.username}`)
+                        this.activeUsername = stats.username
+                        await this.syncDataForAccount()
                     }
-                },
-                "botConfig": (c) => { if (c.newValue) this.config = c.newValue },
-                "delays": (c) => { if (c.newValue) this.delayConfig = c.newValue }
+                }
+
+                // 2. Handle System Run/Stop
+                if (changes["isRunning"]) {
+                    const isNowRunning = !!changes["isRunning"].newValue
+                    if (isNowRunning && !this.active) {
+                        await this.startBotSequence()
+                    } else if (!isNowRunning && this.active) {
+                        await this.stopBotSequence()
+                    }
+                }
+
+                // 3. Handle Account-Specific Config/Delays
+                const configKey = this.pKey("botConfig")
+                const delaysKey = this.pKey("delays")
+
+                if (changes[configKey]) {
+                    const newVal = changes[configKey].newValue
+                    if (newVal) {
+                        const oldOverlay = this.config?.overlayEnabled !== false
+                        this.config = newVal
+                        const newOverlay = this.config?.overlayEnabled !== false
+                        if (this.active) {
+                            if (newOverlay && !oldOverlay) this.createStatusOverlay()
+                            if (!newOverlay && oldOverlay) this.removeStatusOverlay()
+                        }
+                    }
+                }
+
+                if (changes[delaysKey]) {
+                    if (changes[delaysKey].newValue) {
+                        this.delayConfig = changes[delaysKey].newValue
+                    }
+                }
             })
         } catch (e) {
-            console.warn("GrowthBot: Extension context invalidated. Stopping watchers.")
-            this.active = false
+            console.warn("GrowthBot: Listener error", e)
         }
+    }
+
+    private async syncDataForAccount() {
+        const [conf, del, savedStats, savedLogs, savedFollows] = await Promise.all([
+            storage.get<any>(this.pKey("botConfig")),
+            storage.get<any>(this.pKey("delays")),
+            storage.get<BotStats>(this.pKey("stats")),
+            storage.get<LogEntry[]>(this.pKey("logs")),
+            storage.get<FollowedUser[]>(this.pKey("followedUsers"))
+        ])
+        if (conf) this.config = conf
+        if (del) this.delayConfig = del
+        if (savedStats) this.stats = { ...this.stats, ...savedStats }
+        if (savedLogs) this.logs = savedLogs
+        if (savedFollows) this.followedUsers = savedFollows
+
+        if (this.active) {
+            this.removeStatusOverlay()
+            if (this.config?.overlayEnabled !== false) {
+                this.createStatusOverlay()
+            }
+        }
+    }
+
+    private async startBotSequence() {
+        if (this.active && this._loopRunning) return
+        this.active = true
+        this.addLog(">>> ENGINE LAUNCHED: Automation Online", "success")
+        await this.syncActiveUsername()
+
+        await storage.remove(this.pKey("lastSessionReport"))
+        await this.syncDataForAccount()
+        await storage.set("lastNavTime", 0)
+
+        const now = Date.now()
+        this.sessionStart = now
+        await storage.set("botStartTime", now)
+
+        this.currentSessionActions = 0
+        this.sessionLikes = 0
+        this.sessionFollows = 0
+        this.sessionUnfollows = 0
+        this.sessionEngagedProfiles.clear()
+
+        await storage.set(this.pKey("sessionLikes"), 0)
+        await storage.set(this.pKey("sessionFollows"), 0)
+        await storage.set(this.pKey("sessionUnfollows"), 0)
+
+        this.removeStatusOverlay()
+        if (this.config?.overlayEnabled !== false) {
+            this.createStatusOverlay()
+        }
+        this.runLoop()
+    }
+
+    private async stopBotSequence() {
+        if (!this.active) return
+        this.active = false
+        this._loopRunning = false
+        this.addLog("<<< ENGINE STOPPED: Automation Offline", "warning")
+        if (!this.isInternalStop) {
+            await this.generateReport("Manual Stop by User")
+        }
+        this.isInternalStop = false
+        await storage.remove("botStartTime")
     }
 
     private async addToHistory(url: string) {
@@ -163,7 +401,7 @@ class InstagramBot {
         const cleanUrl = url.split('?')[0].replace(/\/$/, "").toLowerCase()
         if (!this.processedHistory.includes(cleanUrl)) {
             this.processedHistory = [cleanUrl, ...this.processedHistory].slice(0, 5000)
-            await storage.set("processedHistory", this.processedHistory)
+            await storage.set(this.pKey("processedHistory"), this.processedHistory)
         }
     }
 
@@ -177,7 +415,7 @@ class InstagramBot {
                 dateStr: new Date().toLocaleDateString()
             }
             this.followedUsers = [entry, ...this.followedUsers].slice(0, 5000)
-            await storage.set("followedUsers", this.followedUsers)
+            await storage.set(this.pKey("followedUsers"), this.followedUsers)
             this.addLog(`Capturing Audience: @${username}`, "info")
             await this.addToHistory(url)
             this.currentSessionActions++
@@ -212,8 +450,9 @@ class InstagramBot {
                 type
             }
             this.logs = [newLog, ...this.logs].slice(0, 50)
-            await storage.set("logs", this.logs)
+            await storage.set(this.pKey("logs"), this.logs)
             console.log(`[GrowthBot] ${msg}`)
+            this.updateStatusUI() // Update UI when log adds
         } catch (e) { }
     }
 
@@ -248,15 +487,25 @@ class InstagramBot {
 
                 const url = window.location.href.toLowerCase()
 
+                // --- SLEEP MODE CHECK ---
+                if (this.isSleepTime()) {
+                    this.addLog("💤 Modo Dormir ACTIVADO. El bot descansará hasta que termine la ventana de sueño.", "wait")
+                    this.removeStatusOverlay()
+                    // Re-check every 15 minutes
+                    await this.sleep(15 * 60 * 1000)
+                    window.location.reload()
+                    return
+                } else if (this.config.overlayEnabled) {
+                    // Restore overlay if we just woke up or it was removed
+                    if (!document.getElementById('sr-status-overlay')) {
+                        this.createStatusOverlay()
+                    }
+                }
 
                 // --- CRITICAL SESSION CHECK ---
                 const isSessionValid = await this.checkSession()
                 if (!isSessionValid) {
-                    this.addLog("CRITICAL: Instagram session lost. Bot stopped.", "warning")
-                    this.active = false
-                    await storage.set("isRunning", false)
-                    await storage.remove("botStartTime")
-                    this._loopRunning = false
+                    await this.stopBot("Session Lost / Logout detected")
                     return
                 }
 
@@ -265,6 +514,29 @@ class InstagramBot {
                 if (!url.includes("instagram.com")) {
                     await this.sleep(5000)
                     continue
+                }
+
+                // --- 0. PRIORITY MAINTENANCE CHECK (Once per day) ---
+                // We check this BEFORE any modal or other logic to ensure data freshness on startup
+                const userStats = await storage.get<any>("currentUserStats")
+                const lastAudit = userStats?.timestamp || 0
+                const today = new Date().toDateString()
+                const lastAuditDate = new Date(lastAudit).toDateString()
+
+                // If never scanned, OR not scanned today
+                if (!lastAudit || lastAuditDate !== today) {
+                    // Check if we are ALREADY in the deep audit mode url to avoid loop re-triggering
+                    const isProcessing = url.includes("mode=deep")
+
+                    if (!isProcessing) {
+                        const myUsername = userStats?.username || await storage.get<string>("lastKnownUsername")
+                        if (myUsername) {
+                            this.addLog("🛠 Priority Maintenance: Daily Deep Audit required...", "wait")
+                            await storage.set("lastNavTime", Date.now())
+                            window.location.href = `https://www.instagram.com/${myUsername}/?mode=deep`
+                            return // Break loop to navigate
+                        }
+                    }
                 }
 
                 const dialog = document.querySelector('div[role="dialog"]')
@@ -358,8 +630,7 @@ class InstagramBot {
         if (this.config.unfollowEnabled) sources.push('unfollow')
 
         if (sources.length === 0) {
-            this.addLog("No active sources selected in Strategy. Waiting...", "warning")
-            await this.sleep(10000)
+            await this.stopBot("No active strategy selected")
             return
         }
 
@@ -367,28 +638,33 @@ class InstagramBot {
         const shuffled = sources.sort(() => Math.random() - 0.5)
         const langParam = "hl=en"
 
+
+
+
         for (const choice of shuffled) {
             if (choice === 'hashtag') {
-                const tags = await storage.get<string[]>("targetHashtags") || []
+                const tags = await storage.get<string[]>(this.pKey("targetHashtags")) || []
                 if (tags.length === 0) {
                     this.addLog("Source 'Hashtags' enabled but list is empty.", "warning")
                     continue
                 }
                 const tag = tags[Math.floor(Math.random() * tags.length)].replace("#", "").trim()
                 if (tag) {
+                    this.currentMission = `#${tag}`
                     this.addLog(`>>> Mission: Hashtag #${tag}`, "success")
                     await storage.set("lastNavTime", Date.now())
                     window.location.href = `https://www.instagram.com/explore/tags/${tag}/?${langParam}`
                     return
                 }
             } else if (choice === 'competitor') {
-                const comps = await storage.get<string[]>("targetCompetitors") || []
+                const comps = await storage.get<string[]>(this.pKey("targetCompetitors")) || []
                 if (comps.length === 0) {
                     this.addLog("Source 'Competitors' enabled but list is empty.", "warning")
                     continue
                 }
                 const comp = comps[Math.floor(Math.random() * comps.length)].replace("@", "").trim()
                 if (comp) {
+                    this.currentMission = `@${comp}`
                     this.addLog(`>>> Mission: Competitor @${comp}`, "success")
                     await storage.set("lastNavTime", Date.now())
                     window.location.href = `https://www.instagram.com/${comp}/?${langParam}`
@@ -397,17 +673,22 @@ class InstagramBot {
             } else if (choice === 'unfollow') {
                 const now = Date.now()
                 const threshold = (this.delayConfig.unfollowDays || 3) * 86400 * 1000
-                const candidates = [...this.followedUsers].reverse().filter(u => !u.protected && (now - u.timestamp) > threshold)
+                const candidates = [...this.followedUsers].reverse().filter(u => !u.protected && !u.unfollowFailed && (now - u.timestamp) > threshold)
 
                 if (candidates.length > 0) {
                     const target = candidates[0]
                     if (target && target.username) {
+                        this.currentMission = `Unfollow @${target.username}`
                         this.addLog(`>>> Mission: Unfollow @${target.username}`, "warning")
                         await storage.set("lastNavTime", Date.now())
                         window.location.href = `https://www.instagram.com/${target.username}/?${langParam}`
                         return
                     }
                 } else {
+                    if (sources.length === 1 && sources[0] === 'unfollow') {
+                        await this.stopBot("No Unfollow targets ready (Maturity Check)")
+                        return
+                    }
                     this.addLog("No Unfollow targets ready (waiting for maturity days).", "info")
                 }
             }
@@ -416,38 +697,31 @@ class InstagramBot {
         // If nothing was chosen, mission is complete. Check for continuous session mode
         if (this.config.continuousSession) {
             this.addLog("🔄 Sesión Continua activada. Reiniciando ciclo...", "success")
-            
+
             // Show summary before continuing
             const summary = `✅ Ciclo completado:\n🔥 Likes: ${this.stats.likes}\n👥 Follows: ${this.stats.follows}\n👋 Unfollows: ${this.stats.unfollows}\n💬 DMs: ${this.stats.dms}\n\n🔄 Reiniciando sesión automáticamente...`
             this.addLog(summary.replace(/\n/g, " | "), "success")
-            
+
             // Reset session counters for the new cycle
             this.currentSessionActions = 0
             this.sessionLikes = 0
             this.sessionFollows = 0
             this.sessionEngagedProfiles.clear()
             this.sessionStart = Date.now()
-            
+
             // Save reset stats to storage
             await storage.set("botStartTime", Date.now())
-            
+
             // Wait a moment before continuing
             await this.sleep(5000)
-            
+
             // Navigate to start a new cycle
             await this.navigateToNextTarget()
             return
         }
 
         // If nothing was chosen and continuous mode is off, Auto-Stop.
-        this.addLog("🛑 All tasks complete or lists empty. Engine stopping.", "warning")
-        
-        // Show summary before stopping
-        const summary = `✅ Resumen del ciclo:\n🔥 Likes: ${this.stats.likes}\n👥 Follows: ${this.stats.follows}\n👋 Unfollows: ${this.stats.unfollows}\n💬 DMs: ${this.stats.dms}`
-        alert(summary)
-        
-        await storage.set("isRunning", false)
-        this.active = false
+        await this.stopBot("No active tasks or lists empty")
 
         window.location.href = `https://www.instagram.com/?${langParam}`
     }
@@ -528,7 +802,9 @@ class InstagramBot {
 
                 if (checkBtn) {
                     this.stats.unfollows++
+                    this.sessionUnfollows++ // Increment session stats
                     await storage.set("stats", this.stats)
+                    await storage.set("sessionUnfollows", this.sessionUnfollows)
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
                     await storage.set("followedUsers", this.followedUsers)
                     this.addLog(`>>> SUCCESS: @${user} unfollowed.`, "success")
@@ -546,9 +822,16 @@ class InstagramBot {
                     // Already unfollowed
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
                     await storage.set("followedUsers", this.followedUsers)
+                    this.addLog(`Already unfollowed @${user}. Removing from DB.`, "success")
                     return "DONE"
                 }
-                this.addLog(`Could not find Unfollow button for @${user}`, "warning")
+
+                // SECURITY: If we can't find ANY button, assume we should skip to avoid loop
+                this.addLog(`Could not find Unfollow button for @${user}. Marking as failed to skip next time.`, "warning")
+                this.followedUsers = this.followedUsers.map(u =>
+                    u.username.toLowerCase() === user ? { ...u, unfollowFailed: true } : u
+                )
+                await storage.set("followedUsers", this.followedUsers)
                 return "DONE"
             }
         }
@@ -581,7 +864,7 @@ class InstagramBot {
                         if (btn) {
                             (btn as HTMLElement).click()
                             this.stats.follows++
-                            await storage.set("stats", this.stats)
+                            await storage.set(this.pKey("stats"), this.stats)
                             await this.saveFollowedTarget(user, cleanUrl)
                         }
                     }
@@ -643,7 +926,8 @@ class InstagramBot {
         if (this.config.likeEnabled) {
             // Check Session Limits
             if (this.sessionLikes >= (this.delayConfig.sessionLikeLimit || 100)) {
-                this.addLog("Daily Like Limit reached! Skipping like.", "warning")
+                await this.stopBot("Daily Like Limit reached")
+                return
             } else {
                 // Updated Like Selector
                 const heart = Array.from(container.querySelectorAll('svg')).find(s => {
@@ -667,7 +951,8 @@ class InstagramBot {
                         btn.click()
                         this.stats.likes++
                         this.sessionLikes++
-                        await storage.set("stats", this.stats)
+                        await storage.set(this.pKey("stats"), this.stats)
+                        await storage.set(this.pKey("sessionLikes"), this.sessionLikes)
                         interacted = true
                     }
                 }
@@ -676,7 +961,8 @@ class InstagramBot {
 
         if (this.config.followEnabled) {
             if (this.sessionFollows >= (this.delayConfig.sessionFollowLimit || 100)) {
-                this.addLog("Daily Follow Limit reached! Skipping follow.", "warning")
+                await this.stopBot("Daily Follow Limit reached")
+                return
             } else {
                 const btns = Array.from(container.querySelectorAll('button'))
                 const btn = btns.find(b => {
@@ -689,7 +975,8 @@ class InstagramBot {
                     (btn as HTMLElement).click()
                     this.stats.follows++
                     this.sessionFollows++
-                    await storage.set("stats", this.stats)
+                    await storage.set(this.pKey("stats"), this.stats)
+                    await storage.set(this.pKey("sessionFollows"), this.sessionFollows)
                     if (profileName && profileUrl) await this.saveFollowedTarget(profileName, profileUrl)
                     interacted = true
                 }
@@ -809,6 +1096,10 @@ class InstagramBot {
                 el.textContent?.toLowerCase().includes("editar perfil")
             )
             if (!editBtn && !isCompetitor && mode === 'deep') return
+
+            if (mode === 'deep' && !isCompetitor) {
+                this.showAuditOverlay()
+            }
 
             this.addLog(`🔍 Audit Mode (${mode.toUpperCase()}): Intercepting Metadata...`, "info")
 
@@ -1036,7 +1327,7 @@ class InstagramBot {
             // No need to redeclare isCompetitor here
 
             if (isCompetitor) {
-                const currentCompsData = await storage.get<any[]>("competitorsData") || []
+                const currentCompsData = await storage.get<any[]>(this.pKey("competitorsData")) || []
                 const compIndex = currentCompsData.findIndex(c => c.username === username)
 
                 const newData = {
@@ -1052,7 +1343,7 @@ class InstagramBot {
                 } else {
                     currentCompsData.push(newData)
                 }
-                await storage.set("competitorsData", currentCompsData)
+                await storage.set(this.pKey("competitorsData"), currentCompsData)
             } else {
                 await storage.set("currentUserStats", {
                     ...profileData,
@@ -1065,9 +1356,31 @@ class InstagramBot {
 
             this.addLog(`✅ Audit Complete: ${latestPosts.length} posts. ER: ${engagementRate.toFixed(2)}%`, "success")
 
-            if (new URLSearchParams(window.location.search).get('audit') === 'true') {
-                await this.sleep(2000)
-                window.close()
+            if (new URLSearchParams(window.location.search).get('audit') === 'true' || new URLSearchParams(window.location.search).get('start_audit') === 'true') {
+                // Send to Supabase via Background
+                try {
+                    const isStartAudit = new URLSearchParams(window.location.search).get('start_audit') === 'true'
+
+                    // Force sync if it was a deep audit
+                    if (mode === 'deep' && !isCompetitor) {
+                        const finalProfile = await storage.get("currentUserStats")
+                        chrome.runtime.sendMessage({ action: "SYNC_STATS", payload: finalProfile })
+                    }
+
+                    await this.sleep(2000)
+
+                    if (isStartAudit) {
+                        // If this was a start_audit, we now start the bot officially (if enabled)
+                        this.addLog("✅ Routine Audit Complete. Starting sequence...", "success")
+                        // Clean URL and go to home to start loop
+                        window.location.href = "https://www.instagram.com/?variant=audit_complete"
+                    } else {
+                        window.close()
+                    }
+                } catch (e) {
+                    console.error("Sync failed", e)
+                    window.close()
+                }
             }
 
             this.sessionEngagedProfiles.add("MY_PROFILE_STATS")
@@ -1078,6 +1391,198 @@ class InstagramBot {
             }
             this.addLog("Analytics Error: " + e.message, "warning")
         }
+    }
+
+    // --- UI OVERLAYS ---
+
+    private uiInterval: any = null
+
+    private createStatusOverlay() {
+        if (this.config.overlayEnabled === false) return
+        if (document.getElementById('sr-status-overlay')) return
+
+        const overlay = document.createElement('div')
+        overlay.id = 'sr-status-overlay'
+        Object.assign(overlay.style, {
+            position: 'fixed',
+            top: '0',
+            left: '0',
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            zIndex: '9999999',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#fff',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            backdropFilter: 'blur(10px)'
+        })
+
+        overlay.innerHTML = `
+            <div style="width: 100%; max-width: 600px; padding: 24px;">
+                <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 32px; gap: 12px;">
+                    <div style="width: 12px; height: 12px; background: #34d399; border-radius: 50%; box-shadow: 0 0 10px #34d399; animation: pulse 2s infinite;"></div>
+                    <div style="text-align: left;">
+                        <h1 style="font-size: 20px; font-weight: 900; letter-spacing: 0.1em; color: #fff; margin: 0;">SOCIAL RADAR ACTIVE</h1>
+                        <p id="sr-active-account" style="font-size: 11px; font-weight: 700; color: #34d399; margin: 2px 0 0 0; text-transform: uppercase;">@${this.activeUsername}</p>
+                    </div>
+                </div>
+
+                <div style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(51, 65, 85, 0.5); padding: 12px 20px; border-radius: 12px; margin-bottom: 24px;">
+                    <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 4px 0;">Current Target</p>
+                    <p id="sr-mission-text" style="font-size: 16px; font-weight: 800; color: #38bdf8; margin: 0;">${this.currentMission}</p>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 32px;">
+                    <div style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(51, 65, 85, 0.5); padding: 16px; border-radius: 16px; text-align: center;">
+                        <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 4px 0;">Likes</p>
+                        <p id="sr-stat-likes" style="font-size: 24px; font-weight: 900; color: #f43f5e; margin: 0;">0</p>
+                    </div>
+                    <div style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(51, 65, 85, 0.5); padding: 16px; border-radius: 16px; text-align: center;">
+                        <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 4px 0;">Follows</p>
+                        <p id="sr-stat-follows" style="font-size: 24px; font-weight: 900; color: #3b82f6; margin: 0;">0</p>
+                    </div>
+                    <div style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(51, 65, 85, 0.5); padding: 16px; border-radius: 16px; text-align: center;">
+                        <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 4px 0;">Unfollows</p>
+                        <p id="sr-stat-unfollows" style="font-size: 24px; font-weight: 900; color: #fbbf24; margin: 0;">0</p>
+                    </div>
+                     <div style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(51, 65, 85, 0.5); padding: 16px; border-radius: 16px; text-align: center;">
+                        <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 4px 0;">Time</p>
+                        <p id="sr-stat-time" style="font-size: 24px; font-weight: 900; color: #e2e8f0; margin: 0;">00:00</p>
+                    </div>
+                </div>
+
+                <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 16px; font-family: monospace; font-size: 12px; height: 150px; overflow-y: auto; color: #94a3b8;">
+                    <div id="sr-logs-container" style="display: flex; flex-direction: column; gap: 6px;"></div>
+                </div>
+                
+                <div style="display: flex; justify-content: center; margin-top: 24px;">
+                     <button id="sr-stop-btn-overlay" style="background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.2); color: #f43f5e; padding: 10px 24px; border-radius: 99px; font-size: 11px; font-weight: 800; letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s; text-transform: uppercase;">
+                        Stop Bot
+                     </button>
+                </div>
+                
+                <p style="text-align: center; margin-top: 16px; color: #475569; font-size: 12px; font-weight: 600;">DO NOT CLOSE THIS TAB</p>
+            </div>
+            <style>
+                @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+                #sr-stop-btn-overlay:hover { background: rgba(244, 63, 94, 0.2) !important; transform: scale(1.05); }
+            </style>
+        `
+
+        document.body.appendChild(overlay)
+
+        // Add Stop Listener
+        const stopBtn = document.getElementById('sr-stop-btn-overlay')
+        if (stopBtn) {
+            stopBtn.addEventListener('click', async () => {
+                stopBtn.innerText = "Stopping..."
+                await this.stopBot("Manual Stop from Overlay")
+            })
+        }
+
+        this.updateStatusUI()
+
+        // Start Timer Interval
+        if (this.uiInterval) clearInterval(this.uiInterval)
+        this.uiInterval = setInterval(() => {
+            this.updateTimerUI()
+        }, 1000)
+    }
+
+    private removeStatusOverlay() {
+        const el = document.getElementById('sr-status-overlay')
+        if (el) el.remove()
+        if (this.uiInterval) clearInterval(this.uiInterval)
+    }
+
+    private updateTimerUI() {
+        const el = document.getElementById('sr-stat-time')
+        if (!el || !this.sessionStart) return
+
+        const diff = Math.floor((Date.now() - this.sessionStart) / 1000)
+        const m = Math.floor(diff / 60).toString().padStart(2, '0')
+        const s = (diff % 60).toString().padStart(2, '0')
+        el.textContent = `${m}:${s}`
+    }
+
+    private updateStatusUI() {
+        const overlay = document.getElementById('sr-status-overlay')
+        if (!overlay) return
+
+        // Update Stats (Use session-specific stats if possible, or global stats diff?) 
+        // We have this.sessionLikes and this.sessionFollows populated in runLoop
+        const elLikes = document.getElementById('sr-stat-likes')
+        const elFollows = document.getElementById('sr-stat-follows')
+        const elUnfollows = document.getElementById('sr-stat-unfollows')
+
+        if (elLikes) elLikes.textContent = this.sessionLikes.toString()
+        if (elFollows) elFollows.textContent = this.sessionFollows.toString()
+        if (elUnfollows) elUnfollows.textContent = this.sessionUnfollows.toString()
+
+        const elMission = document.getElementById('sr-mission-text')
+        if (elMission) elMission.textContent = this.currentMission
+
+        const elAccount = document.getElementById('sr-active-account')
+        if (elAccount) elAccount.textContent = `@${this.activeUsername}`
+
+        // Update Logs
+        const logsContainer = document.getElementById('sr-logs-container')
+        if (logsContainer) {
+            logsContainer.innerHTML = this.logs.slice(0, 8).map(l => {
+                const color = l.type === 'success' ? '#34d399' : l.type === 'warning' ? '#fbbf24' : '#94a3b8'
+                return `<div style="display:flex; gap: 8px;">
+                    <span style="color: #64748b;">${l.time}</span>
+                    <span style="color: ${color};">${l.msg}</span>
+                </div>`
+            }).join('')
+        }
+    }
+
+    private showAuditOverlay() {
+        if (document.getElementById('social-radar-overlay')) return
+
+        const overlay = document.createElement('div')
+        overlay.id = 'social-radar-overlay'
+        overlay.style.position = 'fixed'
+        overlay.style.top = '0'
+        overlay.style.left = '0'
+        overlay.style.width = '100vw'
+        overlay.style.height = '100vh'
+        overlay.style.backgroundColor = 'rgba(15, 23, 42, 0.95)'
+        overlay.style.zIndex = '999999'
+        overlay.style.display = 'flex'
+        overlay.style.flexDirection = 'column'
+        overlay.style.alignItems = 'center'
+        overlay.style.justifyContent = 'center'
+        overlay.style.color = '#fff'
+        overlay.style.fontFamily = 'system-ui, -apple-system, sans-serif'
+        overlay.style.backdropFilter = 'blur(10px)'
+
+        overlay.innerHTML = `
+            <div style="text-align: center; animation: pulse 2s infinite;">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 24px;">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+                <h1 style="font-size: 24px; font-weight: 900; letter-spacing: 0.1em; margin-bottom: 16px; color: #38bdf8;">ANÁLISIS EN PROGRESO</h1>
+                <p style="font-size: 14px; font-weight: 500; color: #94a3b8; max-width: 400px; line-height: 1.6;">
+                    Estamos recopilando métricas y analizando tu perfil.
+                    <br/>
+                    <strong style="color: #f43f5e; display: block; margin-top: 12px;">POR FAVOR NO TOQUES NADA</strong>
+                </p>
+            </div>
+            <style>
+                @keyframes pulse {
+                    0% { opacity: 1; }
+                    50% { opacity: 0.6; }
+                    100% { opacity: 1; }
+                }
+            </style>
+        `
+
+        document.body.appendChild(overlay)
     }
 
     private parseAbbreviatedNumber(str: any): number {
@@ -1092,6 +1597,45 @@ class InstagramBot {
         if (stringVal.includes('K')) num *= 1000
         if (stringVal.includes('M')) num *= 1000000
         return Math.floor(num) || 0
+    }
+    private isSleepTime(): boolean {
+        if (!this.config.sleepEnabled || !this.config.sleepStart) return false
+
+        const now = new Date()
+        const [startH, startM] = this.config.sleepStart.split(':').map(Number)
+        const duration = Number(this.config.sleepDuration) || 8
+
+        const startTime = new Date(now)
+        startTime.setHours(startH, startM, 0)
+
+        const endTime = new Date(startTime)
+        endTime.setHours(startTime.getHours() + duration)
+
+        // Handle overnight sleep (e.g. 23:00 to 07:00)
+        if (endTime < startTime) {
+            // This case shouldn't happen with setHours adding hours, 
+            // but if endTime is on the next day, it works fine.
+        }
+
+        const currentTime = now.getTime()
+        const startTs = startTime.getTime()
+        const endTs = endTime.getTime()
+
+        // If end is tomorrow (e.g. 23:00 + 8h = 07:00 tomorrow)
+        if (endTs > startTs) {
+            // Standard case: sleep doesn't cross midnight OR we are in the start-to-end window
+            if (currentTime >= startTs && currentTime < endTs) return true
+
+            // Handle the case where we are already on the "next day" but still within sleep window
+            // (e.g. it's 02:00, sleep started 23:00 yesterday)
+            const yesterdayStart = new Date(startTime)
+            yesterdayStart.setDate(yesterdayStart.getDate() - 1)
+            const yesterdayEnd = new Date(endTime)
+            yesterdayEnd.setDate(yesterdayEnd.getDate() - 1)
+            if (currentTime >= yesterdayStart.getTime() && currentTime < yesterdayEnd.getTime()) return true
+        }
+
+        return false
     }
 }
 

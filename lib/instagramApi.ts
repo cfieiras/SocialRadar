@@ -236,14 +236,19 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
 
         // Calculate Trust Score (0-100)
         let trustScore = 0
-        const ratio = user.edge_follow?.count ? (user.edge_followed_by?.count / user.edge_follow?.count) : 0
 
-        // Weights: Engagement (40), Ratio (30), Consistency (30)
-        const engWeight = Math.min((engagementRate / 5) * 40, 40) // 5% ER is top tier
-        const ratioWeight = Math.min((ratio / 2) * 30, 30) // 2.0 Ratio is top tier
-        const postFreq = latestPosts.length >= 3 ? 30 : (latestPosts.length / 3) * 30
+        // Only calculate Trust Score if we have valid engagement data. 
+        // If ER is 0, it likely means API blocked the likes/comments, so the score would be invalid.
+        if (engagementRate > 0) {
+            const ratio = user.edge_follow?.count ? (user.edge_followed_by?.count / user.edge_follow?.count) : 0
 
-        trustScore = Math.round(engWeight + ratioWeight + postFreq)
+            // Weights: Engagement (40), Ratio (30), Consistency (30)
+            const engWeight = Math.min((engagementRate / 5) * 40, 40) // 5% ER is top tier
+            const ratioWeight = Math.min((ratio / 2) * 30, 30) // 2.0 Ratio is top tier
+            const postFreq = latestPosts.length >= 3 ? 30 : (latestPosts.length / 3) * 30
+
+            trustScore = Math.round(engWeight + ratioWeight + postFreq)
+        }
 
         // Calculate Velocity (based on last 2 history points)
         const history = await storage.get<any[]>("followerHistory") || []
@@ -279,7 +284,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         if (!targetUsername) {
             await storage.set("currentUserStats", profileData)
             await updateLocalHistory(profileData)
-            await syncStatsToSupabase(profileData)
+            // await syncStatsToSupabase(profileData) // Disabled auto-sync to prevents zeros. Manual sync only.
         }
 
         return profileData
@@ -302,10 +307,29 @@ async function updateLocalHistory(profile: InstagramProfile) {
 
     // Check if we already have an entry for today
     const exists = history.findIndex(h => h.date === today)
-    const newEntry = { date: today, followers: profile.stats.followers, following: profile.stats.following }
+
+    // Prepare new entry
+    const newEntry: any = {
+        date: today,
+        followers: profile.stats.followers,
+        following: profile.stats.following,
+        engagementRate: profile.engagementRate,
+        trustScore: profile.trustScore
+    }
 
     if (exists !== -1) {
-        history[exists] = newEntry
+        const existing = history[exists]
+
+        // SAFETY CHECK: If this scan failed to get engagement/trust (0), 
+        // but we have valid data from earlier today, KEEP the valid data.
+        if (newEntry.engagementRate === 0 && existing.engagementRate > 0) {
+            newEntry.engagementRate = existing.engagementRate
+        }
+        if (newEntry.trustScore === 0 && existing.trustScore > 0) {
+            newEntry.trustScore = existing.trustScore
+        }
+
+        history[exists] = { ...existing, ...newEntry }
     } else {
         history.unshift(newEntry)
     }
@@ -314,7 +338,7 @@ async function updateLocalHistory(profile: InstagramProfile) {
     await storage.set("followerHistory", history.slice(0, 30))
 }
 
-async function syncStatsToSupabase(profile: InstagramProfile) {
+export async function syncStatsToSupabase(profile: InstagramProfile) {
     try {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session) {
@@ -323,22 +347,62 @@ async function syncStatsToSupabase(profile: InstagramProfile) {
         }
 
         const today = new Date().toISOString().split('T')[0]
-        const lastSync = await storage.get<string>("lastSupabaseSync")
 
-        if (lastSync === today) {
-            console.log("IG API: Already synced today. Skipping...")
-            return
+        // Check for existing entry for today (UTC based)
+        const { data: existingData } = await supabase
+            .from('follower_history')
+            .select('id')
+            .eq('user_id', session.user.id)
+            .eq('instagram_username', profile.username)
+            .gte('created_at', `${today}T00:00:00`)
+            .lt('created_at', `${today}T23:59:59`)
+            .order('created_at', { ascending: false })
+            .limit(1)
+
+        const existing = existingData?.[0]
+
+        const payload: any = {
+            user_id: session.user.id,
+            instagram_username: profile.username,
+            follower_count: profile.stats.followers,
+            following_count: profile.stats.following,
+            posts_count: profile.stats.posts
         }
 
-        const { error } = await supabase
-            .from('follower_history')
-            .insert({
-                user_id: session.user.id,
-                instagram_username: profile.username,
+        // Only include quality metrics if they are valid (> 0)
+        // Otherwise sending null allows frontend to distinguish "no data" from "0%"
+        if (profile.engagementRate > 0) payload.engagement_rate = profile.engagementRate
+        else payload.engagement_rate = null
+
+        if (profile.trustScore > 0) payload.account_trust_score = profile.trustScore
+        else payload.account_trust_score = null
+
+        let error = null
+        if (existing) {
+            console.log("IG API: Updating today's stats...")
+
+            // Only update fields that have meaningful data to avoid zero-overwrites
+            const updatePayload: any = {
                 follower_count: profile.stats.followers,
                 following_count: profile.stats.following,
                 posts_count: profile.stats.posts
-            })
+            }
+
+            if (profile.engagementRate > 0) updatePayload.engagement_rate = profile.engagementRate
+            if (profile.trustScore > 0) updatePayload.account_trust_score = profile.trustScore
+
+            const res = await supabase
+                .from('follower_history')
+                .update(updatePayload)
+                .eq('id', existing.id)
+            error = res.error
+        } else {
+            console.log("IG API: Inserting new stats...")
+            const res = await supabase
+                .from('follower_history')
+                .insert(payload)
+            error = res.error
+        }
 
         if (!error) {
             await storage.set("lastSupabaseSync", today)
@@ -348,6 +412,44 @@ async function syncStatsToSupabase(profile: InstagramProfile) {
         }
     } catch (err) {
         console.error("IG API: Sync failed", err)
+    }
+}
+
+export async function fetchHistoryFromSupabase(username: string) {
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session || !username) return []
+
+        const { data } = await supabase
+            .from('follower_history')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .eq('instagram_username', username)
+            .order('created_at', { ascending: false })
+            .limit(30)
+
+        if (!data) return []
+
+        // Filter unique dates (keep latest per day)
+        const uniqueData = data.reduce((acc: any[], current) => {
+            const date = current.created_at.split('T')[0]
+            if (!acc.find(item => item.created_at.split('T')[0] === date)) {
+                acc.push(current)
+            }
+            return acc
+        }, [])
+
+        return uniqueData.map(d => ({
+            date: d.created_at.split('T')[0],
+            timestamp: new Date(d.created_at).getTime(),
+            followers: d.follower_count,
+            following: d.following_count,
+            engagementRate: d.engagement_rate,
+            trustScore: d.account_trust_score
+        }))
+    } catch (err) {
+        console.error("IG API: Error fetching history", err)
+        return []
     }
 }
 
