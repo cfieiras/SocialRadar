@@ -801,7 +801,7 @@ function Dashboard() {
                                                         {comp.bio || "No biography provided."}
                                                     </p>
 
-                                                    <div className="grid grid-cols-3 gap-4 mb-8">
+                                                    <div className="grid grid-cols-3 gap-4 mb-6">
                                                         <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800 text-center">
                                                             <p className="text-[10px] font-black uppercase text-slate-600 mb-1">Followers</p>
                                                             <p className="text-lg font-black text-white">{(Number(comp.stats?.followers) || 0).toLocaleString()}</p>
@@ -813,6 +813,44 @@ function Dashboard() {
                                                         <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800 text-center">
                                                             <p className="text-[10px] font-black uppercase text-slate-600 mb-1">Engagement</p>
                                                             <p className="text-lg font-black text-primary-400">{comp.engagementRate || 0}%</p>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Additional Stats - Trust Score & Growth */}
+                                                    <div className="grid grid-cols-2 gap-4 mb-6">
+                                                        <div className="bg-slate-950/30 p-4 rounded-2xl border border-slate-800/50 flex items-center justify-between">
+                                                            <div>
+                                                                <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Trust Score</p>
+                                                                <p className={`text-xl font-black ${(comp.trustScore || 0) > 70 ? 'text-emerald-400' : (comp.trustScore || 0) > 40 ? 'text-amber-400' : 'text-rose-400'}`}>{comp.trustScore || 0}</p>
+                                                            </div>
+                                                            <Shield className={`w-8 h-8 ${(comp.trustScore || 0) > 70 ? 'text-emerald-500' : (comp.trustScore || 0) > 40 ? 'text-amber-500' : 'text-rose-500'}`} />
+                                                        </div>
+                                                        <div className="bg-slate-950/30 p-4 rounded-2xl border border-slate-800/50 flex items-center justify-between">
+                                                            <div>
+                                                                <p className="text-[10px] font-black uppercase text-slate-500 mb-1">Growth</p>
+                                                                <p className={`text-xl font-black ${(comp.growthVelocity || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{(comp.growthVelocity || 0) >= 0 ? '+' : ''}{comp.growthVelocity || 0}%</p>
+                                                            </div>
+                                                            <Activity className={`w-8 h-8 ${(comp.growthVelocity || 0) >= 0 ? 'text-emerald-500' : 'text-rose-500'}`} />
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Posts Performance */}
+                                                    <div className="bg-slate-950/30 p-4 rounded-2xl border border-slate-800/50 mb-6">
+                                                        <p className="text-[10px] font-black uppercase text-slate-500 mb-3">Recent Posts Performance</p>
+                                                        <div className="grid grid-cols-3 gap-2">
+                                                            {(comp.latestPosts || []).slice(0, 6).map((post: any, idx: number) => (
+                                                                <div key={idx} className="relative group">
+                                                                    <img 
+                                                                        src={post.url} 
+                                                                        className="w-full h-16 object-cover rounded-lg" 
+                                                                        alt="post"
+                                                                    />
+                                                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center gap-1">
+                                                                        <span className="text-[10px] font-black text-white">❤️ {(post.likes || 0).toLocaleString()}</span>
+                                                                        <span className="text-[10px] font-black text-white">💬 {post.comments || 0}</span>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
                                                         </div>
                                                     </div>
 
