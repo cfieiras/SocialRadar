@@ -22,13 +22,14 @@ import { UpdateBanner, SubscriptionScreen, LoginScreen, SignUpScreen } from "./c
 
 
 function IndexPopup() {
-  const [stats] = useStorage({ key: "stats", instance: storage }, { follows: 0, likes: 0, dms: 0, unfollows: 0 })
+  const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
+  const currentUsername = userStats?.username || "global"
+  const [stats] = useStorage({ key: `${currentUsername}_stats`, instance: storage }, { follows: 0, likes: 0, dms: 0, unfollows: 0 })
   const [isRunning, setIsRunning] = useStorage({ key: "isRunning", instance: storage }, false)
   // New Auth State
   const [session, setSession] = useStorage({ key: "session", instance: storage }, { isLoggedIn: false, user: null, isPremium: false })
   const [isRegistering, setIsRegistering] = useState(false)
   // New Analytics Data
-  const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
 
   // Re-verify subscription on load (Case: Session persisted but subscription expired)
   useEffect(() => {

@@ -1,13 +1,14 @@
 {
   "name": "social-radar",
   "displayName": "SocialRadar",
-  "version": "1.1.9",
+  "version": "1.2.0",
   "description": "Automated IG growth tool with human-like interactions",
   "author": "SocialRadar",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build --target=chrome-mv3 --dist-dir=../extension-build",
-    "package": "plasmo package"
+    "package": "plasmo package",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@plasmohq/storage": "^1.15.0",

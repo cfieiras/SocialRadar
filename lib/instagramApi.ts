@@ -5,6 +5,8 @@ const storage = new Storage({
     area: "local"
 })
 
+const accountKey = (username: string, key: string) => `${username}_${key}`
+
 export interface InstagramProfile {
     username: string
     fullName: string
@@ -36,6 +38,19 @@ export interface Unfollower {
     full_name: string
     avatar_url: string
     detected_at: string
+}
+
+export async function getStoredCurrentUserProfile(username?: string): Promise<InstagramProfile | null> {
+    if (username) {
+        return await storage.get<InstagramProfile>(accountKey(username, "currentUserStats")) || null
+    }
+
+    return await storage.get<InstagramProfile>("currentUserStats") || null
+}
+
+export async function storeCurrentUserProfile<T extends InstagramProfile>(profile: T) {
+    await storage.set("currentUserStats", profile)
+    await storage.set(accountKey(profile.username, "currentUserStats"), profile)
 }
 
 /**
@@ -251,7 +266,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         }
 
         // Calculate Velocity (based on last 2 history points)
-        const history = await storage.get<any[]>("followerHistory") || []
+        const history = await storage.get<any[]>(accountKey(user.username, "followerHistory")) || []
         let growthVelocity = 0
         if (history.length >= 2) {
             const currentGrowth = history[0].followers - history[1].followers
@@ -282,7 +297,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
 
         // 3. Update Storage & History (ONLY if it's the main user)
         if (!targetUsername) {
-            await storage.set("currentUserStats", profileData)
+            await storeCurrentUserProfile(profileData)
             await updateLocalHistory(profileData)
             // await syncStatsToSupabase(profileData) // Disabled auto-sync to prevents zeros. Manual sync only.
         }
@@ -302,7 +317,8 @@ export async function fetchCompetitorProfile(username: string): Promise<Instagra
 }
 
 async function updateLocalHistory(profile: InstagramProfile) {
-    const history = await storage.get<any[]>("followerHistory") || []
+    const historyKey = accountKey(profile.username, "followerHistory")
+    const history = await storage.get<any[]>(historyKey) || []
     const today = new Date().toISOString().split('T')[0]
 
     // Check if we already have an entry for today
@@ -335,7 +351,7 @@ async function updateLocalHistory(profile: InstagramProfile) {
     }
 
     // Keep last 30 days
-    await storage.set("followerHistory", history.slice(0, 30))
+    await storage.set(historyKey, history.slice(0, 30))
 }
 
 export async function syncStatsToSupabase(profile: InstagramProfile) {
@@ -454,7 +470,10 @@ export async function fetchHistoryFromSupabase(username: string) {
 }
 
 export async function getGrowthStat() {
-    const history = await storage.get<any[]>("followerHistory") || []
+    const currentProfile = await getStoredCurrentUserProfile()
+    if (!currentProfile?.username) return 0
+
+    const history = await storage.get<any[]>(accountKey(currentProfile.username, "followerHistory")) || []
     if (history.length < 2) return 0
     return history[0].followers - history[1].followers
 }
@@ -465,7 +484,7 @@ export async function getGrowthStat() {
 export async function runDeepScan(onProgress?: (count: number) => void) {
     try {
         console.log("IG API: Starting Deep Scan process...")
-        const stats = await storage.get<InstagramProfile>("currentUserStats")
+        const stats = await getStoredCurrentUserProfile()
         if (!stats?.id) {
             console.error("IG API: Deep Scan failed - No user ID in storage. stats:", stats)
             throw new Error("No user ID found. Please refresh profile first.")

@@ -57,6 +57,7 @@ function Dashboard() {
 
     const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
     const currentUsername = userStats?.username || "global"
+    const competitorsDataKey = `${currentUsername}_competitorsData`
 
     const [termsAccepted] = useStorage<boolean>({ key: "termsAccepted", instance: storage })
     const [session, setSession] = useStorage({ key: "session", instance: storage }, { isLoggedIn: false, user: null, isPremium: false })
@@ -89,6 +90,19 @@ function Dashboard() {
     const [showFeedbackModal, setShowFeedbackModal] = useState(false)
     const [feedbackMessage, setFeedbackMessage] = useState("")
     const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
+
+    // Release Notes Logic
+    const [lastSeenVersion, setLastSeenVersion] = useStorage({ key: "lastSeenVersion", instance: storage }, "")
+    const [showReleaseNotes, setShowReleaseNotes] = useState(false)
+
+    useEffect(() => {
+        if (lastSeenVersion !== undefined && lastSeenVersion !== "" && lastSeenVersion !== currentVersion) {
+            setShowReleaseNotes(true)
+        } else if (lastSeenVersion === "") {
+            // First time or fresh install - mark as seen but dont show notes (they saw onboarding)
+            setLastSeenVersion(currentVersion)
+        }
+    }, [lastSeenVersion, currentVersion])
 
     useEffect(() => {
         const timer = setTimeout(() => setChartReady(true), 1000)
@@ -136,9 +150,10 @@ function Dashboard() {
         }
     }, [userStats?.username])
 
-    const loadHistory = async (username: string) => {
-        if (!username) return
-        const history = await fetchHistoryFromSupabase(username)
+    const loadHistory = async (username?: string) => {
+        const targetUsername = username || userStats?.username
+        if (!targetUsername) return
+        const history = await fetchHistoryFromSupabase(targetUsername)
         if (history && history.length > 0) {
             setSupabaseHistory(history.reverse())
             // history[0] is the latest entry (DESC from API)
@@ -150,8 +165,9 @@ function Dashboard() {
         }
     }
 
-    const loadUnfollowers = async (username: string) => {
-        if (!username) return
+    const loadUnfollowers = async (username?: string) => {
+        const targetUsername = username || userStats?.username
+        if (!targetUsername) return
         const { data: { session } } = await supabase.auth.getSession()
         if (!session) return
 
@@ -159,7 +175,7 @@ function Dashboard() {
             .from('unfollowers_detected')
             .select('*')
             .eq('user_id', session.user.id)
-            .eq('instagram_username', username)
+            .eq('instagram_username', targetUsername)
             .order('detected_at', { ascending: false })
 
         if (data) setUnfollowers(data)
@@ -172,7 +188,9 @@ function Dashboard() {
         setScanProgress(0)
         try {
             await runDeepScan((count) => setScanProgress(count))
-            await loadUnfollowers()
+            if (userStats?.username) {
+                await loadUnfollowers(userStats.username)
+            }
             alert("Deep Scan completado con éxito.")
         } catch (err) {
             alert("Error en el escaneo: " + (err as Error).message)
@@ -254,7 +272,7 @@ function Dashboard() {
                 // Background fetch for the new competitor
                 try {
                     const profile = await fetchCompetitorProfile(username)
-                    const currentComps = await storage.get<any[]>("competitorsData") || []
+                    const currentComps = [...(competitorsData || [])]
                     const exists = currentComps.findIndex(c => c.username === username)
 
                     const finalProfile = profile || {
@@ -273,12 +291,12 @@ function Dashboard() {
                     } else {
                         currentComps.push(finalProfile)
                     }
-                    await storage.set("competitorsData", currentComps)
+                    await storage.set(competitorsDataKey, currentComps)
                     setCompetitorsData(currentComps)
                 } catch (err) {
                     console.error("Dashboard: Quick fetch failed for competitor", err)
                     // Ensure we still show something even on error
-                    const currentComps = await storage.get<any[]>("competitorsData") || []
+                    const currentComps = [...(competitorsData || [])]
                     if (!currentComps.find(c => c.username === username)) {
                         currentComps.push({
                             username,
@@ -290,7 +308,7 @@ function Dashboard() {
                             isVerified: false,
                             latestPosts: []
                         })
-                        await storage.set("competitorsData", currentComps)
+                        await storage.set(competitorsDataKey, currentComps)
                         setCompetitorsData(currentComps)
                     }
                 }
@@ -2175,6 +2193,84 @@ function Dashboard() {
                             </div>
                         </div>
                     )}
+
+                {/* What's New Modal */}
+                {showReleaseNotes && (
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-8 backdrop-blur-xl bg-black/40 animate-in fade-in duration-500">
+                        <div className="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-[3.5rem] overflow-hidden shadow-[0_0_100px_rgba(59,130,246,0.15)] animate-in zoom-in-95 slide-in-from-bottom-10 duration-500">
+                            <div className="relative h-48 bg-gradient-to-br from-primary-600 to-indigo-600 flex items-center justify-center overflow-hidden">
+                                <div className="absolute inset-0 opacity-20">
+                                    <div className="absolute top-0 left-0 w-64 h-64 bg-white rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2" />
+                                    <div className="absolute bottom-0 right-0 w-64 h-64 bg-primary-400 rounded-full blur-3xl translate-x-1/2 translate-y-1/2" />
+                                </div>
+                                <div className="relative z-10 text-center">
+                                    <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/20 backdrop-blur-md text-white font-black text-[10px] uppercase tracking-widest mb-4 border border-white/20">
+                                        Update v{currentVersion}
+                                    </div>
+                                    <h2 className="text-4xl font-black text-white tracking-tighter">What's New in SocialRadar</h2>
+                                </div>
+                                <button
+                                    onClick={() => { setShowReleaseNotes(false); setLastSeenVersion(currentVersion); }}
+                                    className="absolute top-8 right-8 p-3 rounded-2xl bg-black/20 text-white hover:bg-black/40 transition-all"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+
+                            <div className="p-12 space-y-10">
+                                <div className="grid gap-8">
+                                    <div className="flex gap-6 group">
+                                        <div className="w-14 h-14 rounded-2xl bg-primary-500/10 flex items-center justify-center text-primary-400 group-hover:scale-110 group-hover:bg-primary-500 group-hover:text-white transition-all duration-300 shadow-lg shadow-transparent group-hover:shadow-primary-500/20 flex-shrink-0">
+                                            <Users className="w-6 h-6" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-black text-white mb-2 uppercase tracking-wide">Multi-Account Support</h3>
+                                            <p className="text-sm text-slate-400 font-medium leading-relaxed">
+                                                Independent configurations, stats, and logs for every Instagram profile you manage. The engine now detects context switches automatically.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-6 group">
+                                        <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 group-hover:scale-110 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300 shadow-lg shadow-transparent group-hover:shadow-emerald-500/20 flex-shrink-0">
+                                            <Monitor className="w-6 h-6" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-black text-white mb-2 uppercase tracking-wide">Enhanced Mission HUD</h3>
+                                            <p className="text-sm text-slate-400 font-medium leading-relaxed">
+                                                The on-page overlay now displays the active @username and your current targeting mission in real-time.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-6 group">
+                                        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-400 group-hover:scale-110 group-hover:bg-amber-500 group-hover:text-white transition-all duration-300 shadow-lg shadow-transparent group-hover:shadow-amber-500/20 flex-shrink-0">
+                                            <Zap className="w-6 h-6" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-black text-white mb-2 uppercase tracking-wide">Dynamic Engine Polish</h3>
+                                            <p className="text-sm text-slate-400 font-medium leading-relaxed">
+                                                Faster account detection and a re-engineered storage system for smoother transitions between automation tasks.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="pt-8 border-t border-slate-800 flex items-center justify-between">
+                                    <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                                        Build: Stable Release
+                                    </div>
+                                    <button
+                                        onClick={() => { setShowReleaseNotes(false); setLastSeenVersion(currentVersion); }}
+                                        className="px-12 py-5 rounded-2xl bg-slate-800 text-white font-black text-xs uppercase tracking-[0.2em] hover:bg-primary-600 hover:shadow-2xl hover:shadow-primary-600/20 transition-all active:scale-95 border border-slate-700 hover:border-primary-500"
+                                    >
+                                        Let's Go
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </main >
         </div >
     )

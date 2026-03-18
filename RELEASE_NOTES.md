@@ -1,3 +1,32 @@
+# SocialRadar - Version 1.2.0 (Hardening & State Consistency)
+Date: 2026-03-18
+
+## Milestone Summary
+This release focuses on hardening the extension internals so multi-account usage, sync flows, and overlay rendering behave more predictably in production.
+
+## Key Features
+
+### 1. Multi-Account State Consistency
+- **Popup Stats Fix**: The popup now reads account-scoped stats instead of a stale global `stats` key.
+- **History Isolation**: `followerHistory` and stored current profile snapshots are now persisted per Instagram username.
+- **Competitor Storage Fix**: Dashboard competitor data writes now stay inside the active account namespace.
+
+### 2. Background Sync Reliability
+- **SYNC_STATS Handler**: Background service worker now handles audit sync requests sent by the bot engine.
+- **Safer Startup**: Background boot now recreates alarms on startup and wraps profile refresh with error handling.
+
+### 3. Overlay & Messaging Hardening
+- **Safer Overlay Rendering**: Dynamic overlay text is sanitized before being injected into the HUD/log containers.
+- **Message Validation**: Bot message listener now validates `source`, `origin`, and payload shape before accepting intercepted data.
+- **Narrower postMessage Target**: Interceptor now posts to the current page origin instead of `*`.
+
+### 4. UI & Developer Quality
+- **Deep Scan Refresh Fix**: Dashboard now refreshes unfollowers with the active username after a deep scan.
+- **React Hook Fix**: Login remembered-email hydration now uses `useEffect` instead of a render-time `useState` side effect.
+- **Typecheck Script**: Added `npm run typecheck` for faster regression checks during development.
+
+---
+
 # SocialRadar - Version 1.1.9 (Multi-Account & Stabilization)
 Date: 2026-02-16
 

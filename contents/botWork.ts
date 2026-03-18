@@ -1,5 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 import { Storage } from "@plasmohq/storage"
+import { storeCurrentUserProfile } from "../lib/instagramApi"
 
 export const config: PlasmoCSConfig = {
     matches: ["https://www.instagram.com/*"]
@@ -66,6 +67,15 @@ class InstagramBot {
             return `${this.activeUsername}_${key}`
         }
         return key
+    }
+
+    private escapeHtml(value: unknown): string {
+        return String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;")
     }
 
     private async syncActiveUsername() {
@@ -178,7 +188,7 @@ class InstagramBot {
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
                 </div>
                 <h2 style="font-size: 20px; font-weight: 900; color: #fff; margin-bottom: 4px; letter-spacing: -0.02em;">SESSION ENDED</h2>
-                <p style="font-size: 14px; font-weight: 500; color: #94a3b8; margin-bottom: 24px;">${report.stopReason}</p>
+                <p style="font-size: 14px; font-weight: 500; color: #94a3b8; margin-bottom: 24px;">${this.escapeHtml(report.stopReason)}</p>
                 
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 24px;">
                     <div style="background: rgba(30, 41, 59, 0.5); padding: 12px; border-radius: 12px;">
@@ -218,7 +228,8 @@ class InstagramBot {
 
             // Listener para los datos interceptados por interceptor.ts
             window.addEventListener("message", (event) => {
-                if (event.data.type === "SOCIAL_RADAR_GRAPHQL_DATA") {
+                if (event.source !== window || event.origin !== window.location.origin) return
+                if (event.data?.type === "SOCIAL_RADAR_GRAPHQL_DATA" && event.data?.payload && typeof event.data.payload === "object") {
                     this.capturedGraphQLData.push(event.data.payload)
                 }
             })
@@ -1195,7 +1206,7 @@ class InstagramBot {
 
             let baseStats = {}
             if (isCompetitor) {
-                const currentCompsData = await storage.get<any[]>("competitorsData") || []
+                const currentCompsData = await storage.get<any[]>(this.pKey("competitorsData")) || []
                 baseStats = currentCompsData.find(c => c.username === username) || {}
             } else {
                 baseStats = await storage.get<any>("currentUserStats") || {}
@@ -1345,7 +1356,7 @@ class InstagramBot {
                 }
                 await storage.set(this.pKey("competitorsData"), currentCompsData)
             } else {
-                await storage.set("currentUserStats", {
+                await storeCurrentUserProfile({
                     ...profileData,
                     engagementRate: Number(engagementRate.toFixed(2)),
                     trustScore: trustScore,
@@ -1426,13 +1437,13 @@ class InstagramBot {
                     <div style="width: 12px; height: 12px; background: #34d399; border-radius: 50%; box-shadow: 0 0 10px #34d399; animation: pulse 2s infinite;"></div>
                     <div style="text-align: left;">
                         <h1 style="font-size: 20px; font-weight: 900; letter-spacing: 0.1em; color: #fff; margin: 0;">SOCIAL RADAR ACTIVE</h1>
-                        <p id="sr-active-account" style="font-size: 11px; font-weight: 700; color: #34d399; margin: 2px 0 0 0; text-transform: uppercase;">@${this.activeUsername}</p>
+                        <p id="sr-active-account" style="font-size: 11px; font-weight: 700; color: #34d399; margin: 2px 0 0 0; text-transform: uppercase;">@${this.escapeHtml(this.activeUsername)}</p>
                     </div>
                 </div>
 
                 <div style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(51, 65, 85, 0.5); padding: 12px 20px; border-radius: 12px; margin-bottom: 24px;">
                     <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 4px 0;">Current Target</p>
-                    <p id="sr-mission-text" style="font-size: 16px; font-weight: 800; color: #38bdf8; margin: 0;">${this.currentMission}</p>
+                    <p id="sr-mission-text" style="font-size: 16px; font-weight: 800; color: #38bdf8; margin: 0;">${this.escapeHtml(this.currentMission)}</p>
                 </div>
 
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 32px;">
@@ -1534,8 +1545,8 @@ class InstagramBot {
             logsContainer.innerHTML = this.logs.slice(0, 8).map(l => {
                 const color = l.type === 'success' ? '#34d399' : l.type === 'warning' ? '#fbbf24' : '#94a3b8'
                 return `<div style="display:flex; gap: 8px;">
-                    <span style="color: #64748b;">${l.time}</span>
-                    <span style="color: ${color};">${l.msg}</span>
+                    <span style="color: #64748b;">${this.escapeHtml(l.time)}</span>
+                    <span style="color: ${color};">${this.escapeHtml(l.msg)}</span>
                 </div>`
             }).join('')
         }

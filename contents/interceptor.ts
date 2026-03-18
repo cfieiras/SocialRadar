@@ -71,7 +71,7 @@ function processGraphQL(json: any) {
                 posts: window["__IG_POSTS__"],
                 user: capturedUser
             }
-        }, "*");
+        }, window.location.origin);
     }
 
     if (edges.length > 0) {
@@ -118,6 +118,6 @@ function processGraphQL(json: any) {
                 posts: window["__IG_POSTS__"],
                 user: capturedUser
             }
-        }, "*");
+        }, window.location.origin);
     }
 }

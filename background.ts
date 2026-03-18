@@ -1,11 +1,9 @@
 import { Storage } from "@plasmohq/storage"
-import { refreshUserProfile } from "./lib/instagramApi"
+import { refreshUserProfile, syncStatsToSupabase, type InstagramProfile } from "./lib/instagramApi"
 
 const storage = new Storage()
 
-// Initialize default settings on install
-chrome.runtime.onInstalled.addListener(async () => {
-    // ... existing init ...
+async function ensureBackgroundState() {
     const isRunning = await storage.get("isRunning")
     if (isRunning === undefined) await storage.set("isRunning", false)
 
@@ -17,25 +15,39 @@ chrome.runtime.onInstalled.addListener(async () => {
 
     // Set up daily reset alarm for continuous sessions (every 24 hours at midnight)
     chrome.alarms.create("DAILY_RESET", { periodInMinutes: 1440 })
+}
 
-    // Initial refresh
-    refreshUserProfile()
+async function safeRefreshProfile() {
+    try {
+        await refreshUserProfile()
+    } catch (error) {
+        console.error("GrowthBot: Failed to refresh profile in background", error)
+    }
+}
 
+// Initialize default settings on install
+chrome.runtime.onInstalled.addListener(async () => {
+    await ensureBackgroundState()
+    await safeRefreshProfile()
     console.log("GrowthBot: Background service worker initialized with continuous session support")
 })
 
+chrome.runtime.onStartup.addListener(async () => {
+    await ensureBackgroundState()
+})
+
 // Listen for alarms
-chrome.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === "REFRESH_STATS") {
         console.log("GrowthBot: Alarm triggered - Refreshing stats...")
-        refreshUserProfile()
+        await safeRefreshProfile()
     }
     
     if (alarm.name === "DAILY_RESET") {
         console.log("GrowthBot: Daily reset alarm - Preparing for new session day...")
         // Reset daily counters for continuous sessions
-        storage.set("lastNavTime", 0)
-        storage.set("dailyResetTimestamp", Date.now())
+        await storage.set("lastNavTime", 0)
+        await storage.set("dailyResetTimestamp", Date.now())
     }
 })
 
@@ -45,6 +57,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.tabs.query({ url: "*://*.instagram.com/*" }, (tabs) => {
             sendResponse({ tabs })
         })
+        return true
+    }
+
+    if (request.action === "SYNC_STATS") {
+        const payload = request.payload as InstagramProfile | undefined
+
+        if (!payload?.username) {
+            sendResponse({ ok: false, error: "Missing profile payload" })
+            return false
+        }
+
+        void syncStatsToSupabase(payload)
+            .then(() => sendResponse({ ok: true }))
+            .catch((error) => {
+                console.error("GrowthBot: SYNC_STATS failed", error)
+                sendResponse({ ok: false, error: error instanceof Error ? error.message : "Unknown sync error" })
+            })
+
         return true
     }
 })
