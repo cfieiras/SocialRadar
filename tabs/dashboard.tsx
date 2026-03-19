@@ -9,10 +9,10 @@ import {
     Users, Heart, MessageSquare, Settings, BarChart3,
     History, Shield, Zap, Search, Bell, ExternalLink,
     ChevronRight, Play, Pause, Database, Clock, Square,
-    CheckCircle2, Circle, UserPlus, Trash2, AlertTriangle, Activity, X, Radar, Send, Monitor, Moon
+    CheckCircle2, Circle, UserPlus, Trash2, AlertTriangle, Activity, X, Radar, Send, Monitor, Moon, RefreshCw
 } from "lucide-react"
 import "../style.css"
-import { refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, type Unfollower } from "../lib/instagramApi"
+import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, sanitizeImageUrl, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
 import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
@@ -66,9 +66,18 @@ function Dashboard() {
     const [statsData, setStatsData] = useStorage({ key: `${currentUsername}_stats`, instance: storage }, { follows: 0, likes: 0, dms: 0, unfollows: 0 })
     const [hashtags, setHashtags] = useStorage({ key: `${currentUsername}_targetHashtags`, instance: storage }, ["#digitalart"])
     const [competitors, setCompetitors] = useStorage({ key: `${currentUsername}_targetCompetitors`, instance: storage }, ["@leomessi"])
+    const [targetPosts, setTargetPosts] = useStorage({ key: `${currentUsername}_targetPostUrls`, instance: storage }, [] as string[])
+    const [commentTemplates, setCommentTemplates] = useStorage({ key: `${currentUsername}_commentTemplates`, instance: storage }, [
+        "Great post, thanks for sharing!",
+        "Really solid content 👏",
+        "Love this perspective!",
+        "Super useful. Keep it up!"
+    ])
     const [competitorsData, setCompetitorsData] = useStorage({ key: `${currentUsername}_competitorsData`, instance: storage }, [])
     const [newTag, setNewTag] = useState("")
     const [newCompetitor, setNewCompetitor] = useState("")
+    const [newPostUrl, setNewPostUrl] = useState("")
+    const [newCommentTemplate, setNewCommentTemplate] = useState("")
     const [logs] = useStorage({ key: `${currentUsername}_logs`, instance: storage }, [])
     const [followedUsers, setFollowedUsers] = useStorage({ key: `${currentUsername}_followedUsers`, instance: storage }, [])
     const [botStartTime] = useStorage({ key: "botStartTime", instance: storage }, 0)
@@ -133,6 +142,7 @@ function Dashboard() {
     const [displayStats, setDisplayStats] = useState<any>(null)
     const [isOutdated, setIsOutdated] = useState(false)
     const [lastSupabaseSync] = useStorage({ key: "lastSupabaseSync", instance: storage }, "")
+    const safeCurrentAvatar = sanitizeImageUrl(userStats?.avatarUrl) || `https://ui-avatars.com/api/?name=${encodeURIComponent(userStats?.username || "user")}&background=0f172a&color=fff`
 
     useEffect(() => {
         const today = new Date().toISOString().split('T')[0]
@@ -199,6 +209,68 @@ function Dashboard() {
         }
     }
 
+    const handleReloadInstagramAccount = async () => {
+        const loadedUsername = (userStats?.username || "").toLowerCase()
+        const detectedUsername = (await detectActiveUsername())?.toLowerCase()
+        const lastKnownUsername = (await storage.get<string>("lastKnownUsername"))?.toLowerCase() || ""
+        const targetUsername = detectedUsername || lastKnownUsername || loadedUsername
+        const targetUrl = targetUsername
+            ? `https://www.instagram.com/${targetUsername}/?mode=deep&manual_refresh=true`
+            : "https://www.instagram.com/?manual_refresh=true"
+
+        window.open(targetUrl, "_blank")
+
+        try {
+            if (!targetUsername) {
+                alert("No se pudo detectar una cuenta activa. Abrí Instagram, iniciá sesión y volvé a intentar.")
+                return
+            }
+
+            const existingProfile = await storage.get<any>(`${targetUsername}_currentUserStats`)
+            const existingHistory = await storage.get<any[]>(`${targetUsername}_followerHistory`) || []
+            const isFirstAccountLoad = !existingProfile || existingHistory.length === 0 || !(existingProfile?.latestPosts?.length > 0)
+
+            await storage.set("lastKnownUsername", targetUsername)
+
+            // Important: refresh without explicit target so it stores as current user context.
+            const freshProfile = await refreshUserProfile()
+            if (!freshProfile) {
+                alert("No se pudo refrescar el perfil. Revisá que estés logueado en Instagram e intentá de nuevo.")
+                return
+            }
+
+            await loadHistory(freshProfile.username)
+            await loadUnfollowers(freshProfile.username)
+
+            if (isFirstAccountLoad) {
+                await syncStatsToSupabase(freshProfile)
+                try {
+                    setIsScanning(true)
+                    setScanProgress(0)
+                    await runDeepScan((count) => setScanProgress(count))
+                } catch (scanErr) {
+                    console.warn("Dashboard: first-time deep scan failed", scanErr)
+                } finally {
+                    setIsScanning(false)
+                }
+            }
+
+            const refreshedUsername = (freshProfile.username || "").toLowerCase()
+            if (loadedUsername && refreshedUsername && loadedUsername !== refreshedUsername) {
+                alert(`Cuenta cambiada: @${loadedUsername} -> @${refreshedUsername}. Recargando panel...`)
+                window.location.reload()
+                return
+            }
+
+            if (isFirstAccountLoad) {
+                alert(`Cuenta @${freshProfile.username} cargada por primera vez. Se ejecutó el scraping inicial del informe.`)
+            }
+        } catch (e) {
+            console.error("Dashboard: refresh account failed", e)
+            alert("Hubo un error al refrescar la cuenta activa.")
+        }
+    }
+
     useEffect(() => {
         let interval: NodeJS.Timeout
         if (isRunning && botStartTime) {
@@ -229,7 +301,8 @@ function Dashboard() {
         sourcePosts: false,
         sleepEnabled: false,
         sleepStart: "23:00",
-        sleepDuration: 8
+        sleepDuration: 8,
+        onlyDeadAccountUnfollow: false
     })
 
     const toggleProtect = (username: string) => {
@@ -249,7 +322,9 @@ function Dashboard() {
         batchPause: 720,
         unfollowDays: 3,
         sessionLikeLimit: 100, sessionFollowLimit: 100,
-        chaosFreq: 30, chaosDur: 5
+        sessionCommentLimit: 25,
+        chaosFreq: 30, chaosDur: 5,
+        deadAccountDays: 45
     })
 
     const addTag = (e: React.KeyboardEvent) => {
@@ -316,6 +391,31 @@ function Dashboard() {
                 setNewCompetitor("")
             }
         }
+    }
+
+    const addTargetPost = (e: React.KeyboardEvent) => {
+        if (e.key !== "Enter") return
+        const raw = newPostUrl.trim()
+        if (!raw) return
+        const normalized = raw.startsWith("http") ? raw : `https://${raw}`
+        if (!/instagram\.com\/(p|reel)\//i.test(normalized)) {
+            alert("Use a valid Instagram post/reel URL.")
+            return
+        }
+        if (!targetPosts.includes(normalized)) {
+            setTargetPosts([normalized, ...targetPosts].slice(0, 100))
+        }
+        setNewPostUrl("")
+    }
+
+    const addCommentTemplate = (e: React.KeyboardEvent) => {
+        if (e.key !== "Enter") return
+        const text = newCommentTemplate.trim()
+        if (!text) return
+        if (!commentTemplates.includes(text)) {
+            setCommentTemplates([text, ...commentTemplates].slice(0, 30))
+        }
+        setNewCommentTemplate("")
     }
 
 
@@ -425,7 +525,7 @@ function Dashboard() {
                 }
             }
         },
-        { label: "Total Comments", value: (statsData?.dms || 0).toLocaleString(), trend: "Dev Mode", icon: MessageSquare, color: "text-emerald-400", tooltip: "Automated comments feature (Currently in Development)." },
+        { label: "Total Comments", value: (statsData?.dms || 0).toLocaleString(), trend: "Tracked", icon: MessageSquare, color: "text-emerald-400", tooltip: "Automated comments executed by the bot." },
     ]
 
 
@@ -553,6 +653,14 @@ function Dashboard() {
                         <p className="text-sm text-slate-500 font-medium">Real-time modular bot configuration.</p>
                     </div>
                     <div className="flex items-center gap-6">
+                        <button
+                            onClick={handleReloadInstagramAccount}
+                            className="h-12 px-6 rounded-2xl font-black text-xs tracking-widest uppercase transition-all duration-300 flex items-center gap-2 bg-slate-900 text-slate-300 border border-slate-700 hover:bg-slate-800 hover:text-white"
+                            title="Refresh active Instagram account"
+                        >
+                            <RefreshCw className="w-4 h-4" />
+                            Refresh
+                        </button>
 
                         <button
                             onClick={async () => {
@@ -602,7 +710,7 @@ function Dashboard() {
                                         <div className="relative">
                                             <div className="w-24 h-24 rounded-full p-[3px] bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 flex items-center justify-center overflow-hidden">
                                                 <img
-                                                    src={userStats.avatarUrl}
+                                                    src={safeCurrentAvatar}
                                                     className="w-full h-full rounded-full border-4 border-slate-950 object-cover"
                                                     alt="Avatar"
                                                     referrerPolicy="no-referrer"
@@ -756,7 +864,7 @@ function Dashboard() {
                                                 .slice(0, 3)
                                                 .map((post, i) => (
                                                     <div key={i} className="group relative w-16 h-16 rounded-2xl overflow-hidden border-2 border-slate-800 hover:border-primary-500 transition-all cursor-pointer" onClick={() => window.open(`https://instagram.com/p/${post.shortcode}`, "_blank")}>
-                                                        <img src={post.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                                        <img src={sanitizeImageUrl(post.url)} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
                                                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                                                             <Heart className="w-4 h-4 text-white fill-current" />
                                                         </div>
@@ -1151,7 +1259,7 @@ function Dashboard() {
                                                             <div className="relative">
                                                                 <div className="w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-primary-500 to-purple-600">
                                                                     <img
-                                                                        src={comp.avatarUrl}
+                                                                        src={sanitizeImageUrl(comp.avatarUrl) || `https://ui-avatars.com/api/?name=${encodeURIComponent(comp.username || "user")}&background=0f172a&color=fff`}
                                                                         className="w-full h-full rounded-full border-4 border-slate-900 object-cover"
                                                                         alt={comp.username}
                                                                         referrerPolicy="no-referrer"
@@ -1356,7 +1464,7 @@ function Dashboard() {
                                             { id: "likeEnabled", label: "Automated Likes", icon: Heart, color: "text-rose-400" },
                                             { id: "followEnabled", label: "Smart Follow", icon: UserPlus, color: "text-blue-400" },
                                             { id: "unfollowEnabled", label: "Auto-Unfollow (Clean)", icon: Trash2, color: "text-amber-400" },
-                                            { id: "dmEnabled", label: "Comments Auto-Pilot (Dev)", icon: MessageSquare, color: "text-emerald-400" }
+                                            { id: "dmEnabled", label: "Comments Auto-Pilot", icon: MessageSquare, color: "text-emerald-400" }
                                         ].map(item => (
                                             <button
                                                 key={item.id}
@@ -1383,7 +1491,7 @@ function Dashboard() {
                                         {[
                                             { id: "sourceHashtags", label: "Monitor Hashtags", icon: Search, color: "text-indigo-400" },
                                             { id: "sourceCompetitors", label: "Target Competitors", icon: Zap, color: "text-primary-400" },
-                                            { id: "sourcePosts", label: "Specific Posts Analysis (Dev)", icon: Heart, color: "text-rose-400" }
+                                            { id: "sourcePosts", label: "Specific Posts Targeting", icon: Heart, color: "text-rose-400" }
                                         ].map(sourceItem => (
                                             <button
                                                 key={sourceItem.id}
@@ -1457,14 +1565,30 @@ function Dashboard() {
                                     <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-12 animate-in fade-in slide-in-from-right-8 duration-500 col-span-2">
                                         <h3 className="text-xl font-black text-white tracking-tight mb-6 flex items-center gap-3">
                                             <div className="w-2 h-6 bg-rose-500 rounded-full" />
-                                            Target Specific Posts (Development Preview)
+                                            Target Specific Posts
                                         </h3>
-                                        <div className="p-8 bg-slate-950/50 border border-slate-800 rounded-[2rem] flex flex-col items-center justify-center text-center py-16">
-                                            <div className="p-4 rounded-full bg-slate-900 mb-4 text-slate-700">
-                                                <Heart className="w-8 h-8" />
+                                        <div className="p-8 bg-slate-950/50 border border-slate-800 rounded-[2rem]">
+                                            <div className="flex flex-wrap gap-3 mb-6">
+                                                {(targetPosts || []).map((url) => (
+                                                    <span key={url} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 font-bold flex items-center gap-2">
+                                                        <span className="max-w-[380px] truncate">{url}</span>
+                                                        <button
+                                                            onClick={() => setTargetPosts((targetPosts || []).filter((u) => u !== url))}
+                                                            className="text-slate-500 hover:text-rose-400"
+                                                        >
+                                                            ×
+                                                        </button>
+                                                    </span>
+                                                ))}
                                             </div>
-                                            <h4 className="text-lg font-black text-white mb-2">Feature Under Construction</h4>
-                                            <p className="text-slate-500 max-w-md">Soon you will be able to paste a specific post URL here, and the bot will engage with users who liked or commented on that exact post.</p>
+                                            <input
+                                                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-semibold"
+                                                placeholder="Paste Instagram post/reel URL and press Enter..."
+                                                value={newPostUrl}
+                                                onChange={(e) => setNewPostUrl(e.target.value)}
+                                                onKeyDown={addTargetPost}
+                                            />
+                                            <p className="text-xs text-slate-500 mt-3">When enabled, bot can start missions directly from these posts.</p>
                                         </div>
                                     </div>
                                 )}
@@ -1760,6 +1884,24 @@ function Dashboard() {
                                         />
                                     </div>
 
+                                    <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-rose-500/30 transition-all group">
+                                        <div className="flex justify-between items-start mb-8">
+                                            <div>
+                                                <h3 className="text-sm font-black text-white group-hover:text-rose-400 transition-colors uppercase tracking-[0.2em] mb-2">Max Session Comments</h3>
+                                                <p className="text-xs text-slate-500 font-medium">Auto-stop comments after this limit</p>
+                                            </div>
+                                            <div className="px-4 py-1.5 bg-rose-500/10 text-rose-400 rounded-full text-[10px] font-black tracking-widest border border-rose-500/20 shadow-lg shadow-rose-500/10 uppercase">
+                                                REC: 15 - 30
+                                            </div>
+                                        </div>
+                                        <input
+                                            type="number"
+                                            value={delays?.sessionCommentLimit || 25}
+                                            onChange={(e) => setDelays({ ...delays, sessionCommentLimit: parseInt(e.target.value) || 0 })}
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-rose-500 outline-none transition-all shadow-inner"
+                                        />
+                                    </div>
+
                                     {/* Visual Feedback Toggle */}
                                     <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-emerald-500/30 transition-all group col-span-2">
                                         <div className="flex justify-between items-center mb-6">
@@ -1791,6 +1933,52 @@ function Dashboard() {
                                         type="number"
                                         value={delays.unfollowDays}
                                         onChange={(e) => setDelays({ ...delays, unfollowDays: parseInt(e.target.value) || 0 })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-amber-500 outline-none transition-all shadow-inner"
+                                    />
+                                </div>
+
+                                {config.dmEnabled && (
+                                    <div className="mt-8 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-emerald-500/30 transition-all group">
+                                        <div className="flex items-center justify-between mb-6">
+                                            <h3 className="text-sm font-black text-white uppercase tracking-[0.2em]">Comment Templates</h3>
+                                            <span className="text-xs text-slate-500 font-bold">Press Enter to add</span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-3 mb-5">
+                                            {(commentTemplates || []).map((template) => (
+                                                <span key={template} className="px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 font-semibold flex items-center gap-2">
+                                                    <span className="max-w-[480px] truncate">{template}</span>
+                                                    <button onClick={() => setCommentTemplates((commentTemplates || []).filter((t) => t !== template))} className="text-slate-500 hover:text-rose-400">×</button>
+                                                </span>
+                                            ))}
+                                        </div>
+                                        <input
+                                            className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-bold outline-none focus:border-emerald-500"
+                                            placeholder="Add a comment template..."
+                                            value={newCommentTemplate}
+                                            onChange={(e) => setNewCommentTemplate(e.target.value)}
+                                            onKeyDown={addCommentTemplate}
+                                        />
+                                    </div>
+                                )}
+
+                                <div className="mt-8 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-amber-500/30 transition-all group">
+                                    <div className="flex items-center justify-between mb-6">
+                                        <div>
+                                            <h3 className="text-sm font-black text-white uppercase tracking-[0.2em] mb-2">Dead Accounts Cleanup</h3>
+                                            <p className="text-xs text-slate-500">Only unfollow accounts with no recent activity.</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setConfig({ ...config, onlyDeadAccountUnfollow: !config?.onlyDeadAccountUnfollow })}
+                                            className={`px-5 py-2 rounded-xl text-xs font-black transition-all ${config?.onlyDeadAccountUnfollow ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-400"}`}
+                                        >
+                                            {config?.onlyDeadAccountUnfollow ? "ENABLED" : "DISABLED"}
+                                        </button>
+                                    </div>
+                                    <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Dead if no activity in X days</label>
+                                    <input
+                                        type="number"
+                                        value={delays?.deadAccountDays || 45}
+                                        onChange={(e) => setDelays({ ...delays, deadAccountDays: parseInt(e.target.value) || 0 })}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-amber-500 outline-none transition-all shadow-inner"
                                     />
                                 </div>
@@ -2086,7 +2274,7 @@ function Dashboard() {
                                             {(userStats?.latestPosts || []).map((post, i) => (
                                                 <div key={i} className="flex gap-4 p-4 rounded-2xl bg-slate-950 border border-slate-800 hover:border-purple-500/30 transition-all group cursor-pointer" onClick={() => window.open(`https://instagram.com/p/${post.shortcode}`, '_blank')}>
                                                     <div className="w-16 h-16 rounded-xl overflow-hidden bg-slate-900 flex-shrink-0">
-                                                        <img src={post.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                                                        <img src={sanitizeImageUrl(post.url)} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
                                                     </div>
                                                     <div className="flex-grow flex flex-col justify-center">
                                                         <div className="flex items-center gap-4 text-xs">

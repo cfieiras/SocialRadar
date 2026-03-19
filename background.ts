@@ -19,9 +19,25 @@ async function ensureBackgroundState() {
 
 async function safeRefreshProfile() {
     try {
+        await storage.set("systemHealth", {
+            ...(await storage.get("systemHealth") || {}),
+            lastBackgroundRefreshAt: Date.now(),
+            lastBackgroundRefreshStatus: "running"
+        })
         await refreshUserProfile()
+        await storage.set("systemHealth", {
+            ...(await storage.get("systemHealth") || {}),
+            lastBackgroundRefreshAt: Date.now(),
+            lastBackgroundRefreshStatus: "ok"
+        })
     } catch (error) {
         console.error("GrowthBot: Failed to refresh profile in background", error)
+        await storage.set("systemHealth", {
+            ...(await storage.get("systemHealth") || {}),
+            lastBackgroundRefreshAt: Date.now(),
+            lastBackgroundRefreshStatus: "error",
+            lastBackgroundError: error instanceof Error ? error.message : String(error)
+        })
     }
 }
 
@@ -48,6 +64,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         // Reset daily counters for continuous sessions
         await storage.set("lastNavTime", 0)
         await storage.set("dailyResetTimestamp", Date.now())
+        await storage.set("systemHealth", {
+            ...(await storage.get("systemHealth") || {}),
+            lastDailyResetAt: Date.now()
+        })
     }
 })
 

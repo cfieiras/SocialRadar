@@ -7,6 +7,11 @@ const storage = new Storage({
 
 const accountKey = (username: string, key: string) => `${username}_${key}`
 
+export function sanitizeImageUrl(url?: string | null): string {
+    if (!url) return ""
+    return String(url).replace(/\\u0026/g, '&').replace(/\\/g, '').trim()
+}
+
 export interface InstagramProfile {
     username: string
     fullName: string
@@ -123,10 +128,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
 
         console.log("IG API: Fetched user data for", user.username)
 
-        let avatarUrl = user.profile_pic_url_hd || user.profile_pic_url
-        if (avatarUrl) {
-            avatarUrl = avatarUrl.replace(/\\u0026/g, '&').replace(/\\/g, '')
-        }
+        let avatarUrl = sanitizeImageUrl(user.profile_pic_url_hd || user.profile_pic_url)
 
         // 2. Extract media/posts data
         let mediaEdges = user.edge_owner_to_timeline_media?.edges ||
@@ -199,7 +201,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
                             node: {
                                 id: m[1],
                                 shortcode: m[1],
-                                display_url: m[2].replace(/\\u0026/g, '&'),
+                                display_url: sanitizeImageUrl(m[2]),
                                 edge_liked_by: { count: 0 },
                                 edge_media_to_comment: { count: 0 },
                                 taken_at_timestamp: Date.now() / 1000
@@ -214,7 +216,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
                                 node: {
                                     id: `scraped_${i}`,
                                     shortcode: '',
-                                    display_url: url.replace(/\\/g, '').replace(/\\u0026/g, '&'),
+                                    display_url: sanitizeImageUrl(url),
                                     edge_liked_by: { count: 0 },
                                     edge_media_to_comment: { count: 0 },
                                     taken_at_timestamp: Date.now() / 1000
@@ -234,7 +236,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
             const node = item.node || item
             return {
                 id: node.id,
-                url: node.display_url || node.image_versions2?.candidates?.[0]?.url || node.thumbnail_src,
+                url: sanitizeImageUrl(node.display_url || node.image_versions2?.candidates?.[0]?.url || node.thumbnail_src),
                 likes: node.edge_liked_by?.count || node.like_count || node.edge_media_preview_like?.count || 0,
                 comments: node.edge_media_to_comment?.count || node.comment_count || 0,
                 timestamp: node.taken_at_timestamp || node.taken_at || node.device_timestamp,
@@ -276,10 +278,26 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
             }
         }
 
+        const existingProfile = await getStoredCurrentUserProfile(user.username)
+
+        let finalEngagementRate = Number(engagementRate.toFixed(2))
+        let finalTrustScore = trustScore
+        const hasInteractions = latestPosts.some((p: any) => (p.likes || 0) > 0 || (p.comments || 0) > 0)
+
+        // Avoid overwriting valid metrics with an API snapshot that came back empty/blocked.
+        if (!hasInteractions && existingProfile) {
+            if (finalEngagementRate === 0 && (existingProfile.engagementRate || 0) > 0) {
+                finalEngagementRate = existingProfile.engagementRate
+            }
+            if (finalTrustScore === 0 && (existingProfile.trustScore || 0) > 0) {
+                finalTrustScore = existingProfile.trustScore
+            }
+        }
+
         const profileData: InstagramProfile = {
             username: user.username,
             fullName: user.full_name,
-            avatarUrl: avatarUrl,
+            avatarUrl: sanitizeImageUrl(avatarUrl || existingProfile?.avatarUrl || ""),
             bio: user.biography,
             stats: {
                 posts: user.edge_owner_to_timeline_media?.count || 0,
@@ -290,8 +308,8 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
             timestamp: Date.now(),
             id: user.id,
             latestPosts: latestPosts,
-            engagementRate: Number(engagementRate.toFixed(2)),
-            trustScore: trustScore,
+            engagementRate: finalEngagementRate,
+            trustScore: finalTrustScore,
             growthVelocity: growthVelocity
         }
 

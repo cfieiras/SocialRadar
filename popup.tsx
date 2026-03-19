@@ -7,7 +7,7 @@ const storage = new Storage({
 import { LayoutDashboard, Play, Settings, Zap, Users, Heart, MessageSquare, ShieldCheck, Square, Lock, ArrowRight, LogIn, AlertCircle, Radar } from "lucide-react"
 import { useState, useEffect } from "react"
 import { supabase } from "./lib/supabaseClient"
-import { refreshUserProfile } from "./lib/instagramApi"
+import { refreshUserProfile, sanitizeImageUrl } from "./lib/instagramApi"
 import "./style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
 
@@ -78,6 +78,7 @@ function IndexPopup() {
 
   // Terms of Service Gate
   const [termsAccepted] = useStorage({ key: "termsAccepted", instance: storage }, false)
+  const safeAvatarSrc = sanitizeImageUrl(userStats?.avatarUrl) || `https://ui-avatars.com/api/?name=${encodeURIComponent(userStats?.username || "user")}&background=0f172a&color=fff`
 
   if (!termsAccepted) {
     return (
@@ -146,7 +147,7 @@ function IndexPopup() {
               <div className="relative">
                 <div className="w-14 h-14 rounded-full p-[2px] bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 flex items-center justify-center overflow-hidden">
                   <img
-                    src={userStats.avatarUrl}
+                    src={safeAvatarSrc}
                     alt="profile"
                     className="w-full h-full rounded-full border-2 border-slate-950 object-cover"
                     referrerPolicy="no-referrer"

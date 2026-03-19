@@ -45,6 +45,15 @@ interface FollowedUser {
     unfollowFailed?: boolean // Tracks if we couldn't unfollow (e.g. button hidden/error)
 }
 
+interface HealthMetrics {
+    lastHeartbeat: number
+    lastAction: string
+    lastActionAt: number
+    errorCount: number
+    lastError: string
+    lastErrorAt: number
+}
+
 class InstagramBot {
     private active: boolean = false
     private sessionStart = Date.now()
@@ -61,7 +70,8 @@ class InstagramBot {
             "botConfig", "delays", "stats", "logs", "followedUsers",
             "targetHashtags", "targetCompetitors", "competitorsData",
             "lastSessionReport", "followerHistory", "sessionLikes",
-            "sessionFollows", "sessionUnfollows", "processedHistory"
+            "sessionFollows", "sessionUnfollows", "processedHistory",
+            "targetPostUrls", "commentTemplates", "healthMetrics", "sessionComments"
         ]
         if (accountSpecific.includes(key)) {
             return `${this.activeUsername}_${key}`
@@ -76,6 +86,14 @@ class InstagramBot {
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#39;")
+    }
+
+    private sanitizeImageUrl(url: unknown): string {
+        if (!url) return ""
+        return String(url)
+            .replace(/\\u0026/g, "&")
+            .replace(/\\/g, "")
+            .trim()
     }
 
     private async syncActiveUsername() {
@@ -104,6 +122,7 @@ class InstagramBot {
     private sessionLikes: number = 0
     private sessionFollows: number = 0
     private sessionUnfollows: number = 0
+    private sessionComments: number = 0
     private capturedGraphQLData: any[] = []
 
     private config: any = {
@@ -113,12 +132,14 @@ class InstagramBot {
         unfollowEnabled: false,
         sourceHashtags: true,
         sourceCompetitors: false,
+        sourcePosts: false,
         chaosEnabled: false,
         continuousSession: false,
         overlayEnabled: true,
         sleepEnabled: false,
         sleepStart: "23:00",
-        sleepDuration: 8
+        sleepDuration: 8,
+        onlyDeadAccountUnfollow: false
     }
 
     private delayConfig: any = {
@@ -131,7 +152,8 @@ class InstagramBot {
         unfollowDays: 3,
         unfollowMin: 10, unfollowMax: 20,
         chaosFreq: 30, chaosDur: 5,
-        sessionLikeLimit: 100, sessionFollowLimit: 100
+        sessionLikeLimit: 100, sessionFollowLimit: 100, sessionCommentLimit: 25,
+        deadAccountDays: 45
     }
 
     constructor() {
@@ -165,7 +187,7 @@ class InstagramBot {
                 likes: this.sessionLikes,
                 follows: this.sessionFollows,
                 unfollows: this.sessionUnfollows,
-                dms: 0
+                dms: this.sessionComments
             },
             stopReason: reason
         }
@@ -236,7 +258,7 @@ class InstagramBot {
 
             await this.syncActiveUsername()
 
-            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedStartTime, sLikes, sFollows, sUnfollows] = await Promise.all([
+            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments] = await Promise.all([
                 storage.get(this.pKey("botConfig")),
                 storage.get(this.pKey("delays")),
                 storage.get<BotStats>(this.pKey("stats")),
@@ -245,10 +267,13 @@ class InstagramBot {
                 storage.get<string[]>(this.pKey("processedHistory")),
                 storage.get<string[]>(this.pKey("targetHashtags")),
                 storage.get<string[]>(this.pKey("targetCompetitors")),
+                storage.get<string[]>(this.pKey("targetPostUrls")),
+                storage.get<string[]>(this.pKey("commentTemplates")),
                 storage.get<number>("botStartTime"),
                 storage.get<number>(this.pKey("sessionLikes")),
                 storage.get<number>(this.pKey("sessionFollows")),
-                storage.get<number>(this.pKey("sessionUnfollows"))
+                storage.get<number>(this.pKey("sessionUnfollows")),
+                storage.get<number>(this.pKey("sessionComments"))
             ])
 
             if (savedConfig) this.config = savedConfig
@@ -261,10 +286,13 @@ class InstagramBot {
             if (sLikes) this.sessionLikes = sLikes
             if (sFollows) this.sessionFollows = sFollows
             if (sUnfollows) this.sessionUnfollows = sUnfollows
+            if (sComments) this.sessionComments = sComments
 
             // Initialize defaults if missing
             if (!savedHashtags) await storage.set(this.pKey("targetHashtags"), ["#digitalart"])
             if (!savedCompetitors) await storage.set(this.pKey("targetCompetitors"), ["@leomessi"])
+            if (!savedPostUrls) await storage.set(this.pKey("targetPostUrls"), [])
+            if (!savedCommentTemplates) await storage.set(this.pKey("commentTemplates"), this.getCommentTemplates())
 
             this.listenToToggles()
 
@@ -382,11 +410,13 @@ class InstagramBot {
         this.sessionLikes = 0
         this.sessionFollows = 0
         this.sessionUnfollows = 0
+        this.sessionComments = 0
         this.sessionEngagedProfiles.clear()
 
         await storage.set(this.pKey("sessionLikes"), 0)
         await storage.set(this.pKey("sessionFollows"), 0)
         await storage.set(this.pKey("sessionUnfollows"), 0)
+        await storage.set(this.pKey("sessionComments"), 0)
 
         this.removeStatusOverlay()
         if (this.config?.overlayEnabled !== false) {
@@ -463,12 +493,47 @@ class InstagramBot {
             this.logs = [newLog, ...this.logs].slice(0, 50)
             await storage.set(this.pKey("logs"), this.logs)
             console.log(`[GrowthBot] ${msg}`)
+            await this.updateHealth({ lastAction: msg.slice(0, 120), lastActionAt: Date.now() })
             this.updateStatusUI() // Update UI when log adds
         } catch (e) { }
     }
 
     private async sleep(ms: number) {
         return new Promise(resolve => setTimeout(resolve, ms))
+    }
+
+    private async updateHealth(partial: Partial<HealthMetrics>) {
+        try {
+            const current = await storage.get<HealthMetrics>(this.pKey("healthMetrics")) || {
+                lastHeartbeat: 0,
+                lastAction: "idle",
+                lastActionAt: 0,
+                errorCount: 0,
+                lastError: "",
+                lastErrorAt: 0
+            }
+            const next = { ...current, ...partial }
+            await storage.set(this.pKey("healthMetrics"), next)
+        } catch { }
+    }
+
+    private async recordError(err: unknown, where: string) {
+        const message = err instanceof Error ? err.message : String(err ?? "unknown error")
+        const current = await storage.get<HealthMetrics>(this.pKey("healthMetrics"))
+        await this.updateHealth({
+            errorCount: (current?.errorCount || 0) + 1,
+            lastError: `${where}: ${message}`,
+            lastErrorAt: Date.now()
+        })
+    }
+
+    private getCommentTemplates(): string[] {
+        return [
+            "Great post, thanks for sharing!",
+            "Really solid content 👏",
+            "Love this perspective!",
+            "Super useful. Keep it up!"
+        ]
     }
 
     private async randomSleep(type: 'nav' | 'view' | 'action' | 'grid' | 'unfollow') {
@@ -484,10 +549,11 @@ class InstagramBot {
     async runLoop() {
         if (this._loopRunning) return
         this._loopRunning = true
-
-        while (this.active) {
-            try {
-                const limit = this.delayConfig.batchLimit || 15
+        try {
+            while (this.active) {
+                try {
+                    await this.updateHealth({ lastHeartbeat: Date.now() })
+                    const limit = this.delayConfig.batchLimit || 15
                 if (this.currentSessionActions >= limit) {
                     const restTime = this.delayConfig.batchPause || 3600
                     this.addLog(`SECURITY PROTECTION: limit reached (${limit}). Resting ${restTime}s...`, "warning")
@@ -625,19 +691,24 @@ class InstagramBot {
                     }
                 }
 
-                if (this.active) await this.randomSleep('grid')
-            } catch (err) {
-                this.addLog(`Engine hiccup: ${err.message}`, "warning")
-                await this.sleep(8000)
+                    if (this.active) await this.randomSleep('grid')
+                } catch (err) {
+                    this.addLog(`Engine hiccup: ${err.message}`, "warning")
+                    await this.recordError(err, "runLoop")
+                    await this.sleep(8000)
+                }
             }
+        } finally {
+            // Guarantees the engine can be started again even if the loop exits via return.
+            this._loopRunning = false
         }
-        this._loopRunning = false
     }
 
     async navigateToNextTarget() {
         const sources = []
         if (this.config.sourceHashtags) sources.push('hashtag')
         if (this.config.sourceCompetitors) sources.push('competitor')
+        if (this.config.sourcePosts) sources.push('post')
         if (this.config.unfollowEnabled) sources.push('unfollow')
 
         if (sources.length === 0) {
@@ -681,6 +752,19 @@ class InstagramBot {
                     window.location.href = `https://www.instagram.com/${comp}/?${langParam}`
                     return
                 }
+            } else if (choice === 'post') {
+                const postUrls = await storage.get<string[]>(this.pKey("targetPostUrls")) || []
+                const clean = postUrls.map((u) => (u || "").trim()).filter(Boolean)
+                if (clean.length === 0) {
+                    this.addLog("Source 'Posts' enabled but list is empty.", "warning")
+                    continue
+                }
+                const picked = clean[Math.floor(Math.random() * clean.length)]
+                this.currentMission = `Post Target`
+                this.addLog(`>>> Mission: Post URL`, "success")
+                await storage.set("lastNavTime", Date.now())
+                window.location.href = picked
+                return
             } else if (choice === 'unfollow') {
                 const now = Date.now()
                 const threshold = (this.delayConfig.unfollowDays || 3) * 86400 * 1000
@@ -710,13 +794,14 @@ class InstagramBot {
             this.addLog("🔄 Sesión Continua activada. Reiniciando ciclo...", "success")
 
             // Show summary before continuing
-            const summary = `✅ Ciclo completado:\n🔥 Likes: ${this.stats.likes}\n👥 Follows: ${this.stats.follows}\n👋 Unfollows: ${this.stats.unfollows}\n💬 DMs: ${this.stats.dms}\n\n🔄 Reiniciando sesión automáticamente...`
+            const summary = `✅ Ciclo completado:\n🔥 Likes: ${this.sessionLikes}\n👥 Follows: ${this.sessionFollows}\n👋 Unfollows: ${this.sessionUnfollows}\n💬 Comments: ${this.sessionComments}\n\n🔄 Reiniciando sesión automáticamente...`
             this.addLog(summary.replace(/\n/g, " | "), "success")
 
             // Reset session counters for the new cycle
             this.currentSessionActions = 0
             this.sessionLikes = 0
             this.sessionFollows = 0
+            this.sessionComments = 0
             this.sessionEngagedProfiles.clear()
             this.sessionStart = Date.now()
 
@@ -746,6 +831,19 @@ class InstagramBot {
 
         if (this.config.unfollowEnabled && isFollowedTarget) {
             this.addLog(`Processing Unfollow: @${user}...`, "info")
+
+            if (this.config.onlyDeadAccountUnfollow) {
+                const isDead = await this.isDeadAccountFromDom(Number(this.delayConfig.deadAccountDays || 45))
+                if (isDead === false) {
+                    this.addLog(`Skipping @${user}: account still active (dead-account mode).`, "info")
+                    this.sessionEngagedProfiles.add(window.location.href.split('?')[0].replace(/\/$/, "").toLowerCase())
+                    return "DONE"
+                }
+                if (isDead === null) {
+                    this.addLog(`Skipping @${user}: couldn't verify inactivity safely.`, "warning")
+                    return "DONE"
+                }
+            }
 
             // Improved 'Following' button detection logic
             const allButtons = Array.from(document.querySelectorAll('header button, main header button, div[role="button"]'))
@@ -994,6 +1092,22 @@ class InstagramBot {
             }
         }
 
+        if (this.config.dmEnabled) {
+            if (this.sessionComments >= (this.delayConfig.sessionCommentLimit || 25)) {
+                await this.stopBot("Daily Comment Limit reached")
+                return
+            } else {
+                const posted = await this.tryPostComment(container)
+                if (posted) {
+                    this.stats.dms++
+                    this.sessionComments++
+                    await storage.set(this.pKey("stats"), this.stats)
+                    await storage.set(this.pKey("sessionComments"), this.sessionComments)
+                    interacted = true
+                }
+            }
+        }
+
         if (interacted) {
             this.currentSessionActions++
             if (profileUrl) this.sessionEngagedProfiles.add(profileUrl)
@@ -1158,6 +1272,7 @@ class InstagramBot {
             }
 
             let capturedPosts = Array.from(uniquePosts.values())
+                .map((p: any) => ({ ...p, url: this.sanitizeImageUrl(p?.url) }))
 
             // Sort by newest and limit to 12 (as requested: "cuente hasta 12 posts")
             capturedPosts.sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0))
@@ -1212,7 +1327,7 @@ class InstagramBot {
                 baseStats = await storage.get<any>("currentUserStats") || {}
             }
             const existingStats: any = baseStats
-            const avatarUrl = header?.querySelector('img')?.src || ""
+            const avatarUrl = this.sanitizeImageUrl(header?.querySelector('img')?.src || "")
 
             const parseStatText = (item: Element) => {
                 const span = item.querySelector('span, a span, div span') || item;
@@ -1242,7 +1357,11 @@ class InstagramBot {
             // Use intercepted user data if available, otherwise fallback to DOM
             // If in DEEP mode, we PRESERVE existing metadata as per requirement
             const finalFullName = (mode === 'deep' && existingStats.fullName) ? existingStats.fullName : (interceptedUser?.full_name || interceptedUser?.fullName || domFullName || existingStats.fullName || username)
-            const finalAvatarUrl = (mode === 'deep' && existingStats.avatarUrl) ? existingStats.avatarUrl : (interceptedUser?.profile_pic_url || interceptedUser?.profilePicUrl || avatarUrl || existingStats.avatarUrl)
+            const finalAvatarUrl = this.sanitizeImageUrl(
+                (mode === 'deep' && existingStats.avatarUrl)
+                    ? existingStats.avatarUrl
+                    : (interceptedUser?.profile_pic_url || interceptedUser?.profilePicUrl || avatarUrl || existingStats.avatarUrl)
+            )
             const finalBio = (mode === 'deep' && existingStats.bio) ? existingStats.bio : (interceptedUser?.biography || interceptedUser?.bio || domBio || existingStats.bio || "")
             const finalIsVerified = (mode === 'deep' && existingStats.isVerified !== undefined) ? existingStats.isVerified : (interceptedUser?.is_verified ?? (header?.querySelector('svg[aria-label="Verified"]') ? true : (existingStats.isVerified ?? false)))
 
@@ -1446,6 +1565,13 @@ class InstagramBot {
                     <p id="sr-mission-text" style="font-size: 16px; font-weight: 800; color: #38bdf8; margin: 0;">${this.escapeHtml(this.currentMission)}</p>
                 </div>
 
+                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(51, 65, 85, 0.6); padding: 12px 16px; border-radius: 12px; margin-bottom: 20px;">
+                    <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 8px 0;">Active Config</p>
+                    <p id="sr-config-modules" style="font-size: 11px; font-weight: 700; color: #e2e8f0; margin: 0 0 6px 0;">Modules: ${this.escapeHtml(this.getEnabledModulesLabel())}</p>
+                    <p id="sr-config-sources" style="font-size: 11px; font-weight: 700; color: #cbd5e1; margin: 0 0 6px 0;">Sources: ${this.escapeHtml(this.getEnabledSourcesLabel())}</p>
+                    <p id="sr-config-mode" style="font-size: 11px; font-weight: 700; color: #94a3b8; margin: 0;">Mode: ${this.escapeHtml(this.getModeLabel())}</p>
+                </div>
+
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 32px;">
                     <div style="background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(51, 65, 85, 0.5); padding: 16px; border-radius: 16px; text-align: center;">
                         <p style="font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 4px 0;">Likes</p>
@@ -1539,6 +1665,15 @@ class InstagramBot {
         const elAccount = document.getElementById('sr-active-account')
         if (elAccount) elAccount.textContent = `@${this.activeUsername}`
 
+        const elModules = document.getElementById('sr-config-modules')
+        if (elModules) elModules.textContent = `Modules: ${this.getEnabledModulesLabel()}`
+
+        const elSources = document.getElementById('sr-config-sources')
+        if (elSources) elSources.textContent = `Sources: ${this.getEnabledSourcesLabel()}`
+
+        const elMode = document.getElementById('sr-config-mode')
+        if (elMode) elMode.textContent = `Mode: ${this.getModeLabel()}`
+
         // Update Logs
         const logsContainer = document.getElementById('sr-logs-container')
         if (logsContainer) {
@@ -1609,6 +1744,88 @@ class InstagramBot {
         if (stringVal.includes('M')) num *= 1000000
         return Math.floor(num) || 0
     }
+
+    private async isDeadAccountFromDom(deadDays: number): Promise<boolean | null> {
+        try {
+            const postTime = document.querySelector('article time') as HTMLTimeElement | null
+            if (!postTime?.dateTime) {
+                // If there are no posts, it is considered inactive for cleanup.
+                const hasPosts = !!document.querySelector('article a[href*="/p/"], article a[href*="/reel/"]')
+                if (!hasPosts) return true
+                return null
+            }
+
+            const lastPostMs = new Date(postTime.dateTime).getTime()
+            if (!Number.isFinite(lastPostMs)) return null
+            const days = (Date.now() - lastPostMs) / 86400000
+            return days >= deadDays
+        } catch {
+            return null
+        }
+    }
+
+    private async tryPostComment(container: ParentNode): Promise<boolean> {
+        try {
+            const input = container.querySelector('textarea[aria-label*="comment" i], textarea[placeholder*="comment" i], textarea[aria-label*="coment" i]') as HTMLTextAreaElement | null
+            if (!input) return false
+
+            const savedTemplates = await storage.get<string[]>(this.pKey("commentTemplates"))
+            const templates = (savedTemplates && savedTemplates.length > 0) ? savedTemplates : this.getCommentTemplates()
+            const text = templates[Math.floor(Math.random() * templates.length)]
+            if (!text) return false
+
+            input.focus()
+            input.value = text
+            input.dispatchEvent(new Event("input", { bubbles: true }))
+            input.dispatchEvent(new Event("change", { bubbles: true }))
+            await this.sleep(500)
+
+            const buttons = Array.from(container.querySelectorAll('button'))
+            const postBtn = buttons.find((b) => {
+                const t = (b.textContent || "").toLowerCase().trim()
+                return t === "post" || t === "publicar"
+            })
+            if (!postBtn || (postBtn as HTMLButtonElement).disabled) return false
+
+            ;(postBtn as HTMLElement).click()
+            await this.sleep(800)
+            this.addLog("Comment posted", "success")
+            await this.updateHealth({ lastAction: "comment_posted", lastActionAt: Date.now() })
+            return true
+        } catch (e) {
+            await this.recordError(e, "tryPostComment")
+            return false
+        }
+    }
+
+    private getEnabledModulesLabel(): string {
+        const modules = [
+            this.config.likeEnabled ? "Likes" : "",
+            this.config.followEnabled ? "Follows" : "",
+            this.config.unfollowEnabled ? "Unfollows" : "",
+            this.config.dmEnabled ? "Comments/DM" : ""
+        ].filter(Boolean)
+        return modules.length > 0 ? modules.join(" | ") : "None"
+    }
+
+    private getEnabledSourcesLabel(): string {
+        const sources = [
+            this.config.sourceHashtags ? "Hashtags" : "",
+            this.config.sourceCompetitors ? "Competitors" : "",
+            this.config.unfollowEnabled ? "Unfollow Queue" : ""
+        ].filter(Boolean)
+        return sources.length > 0 ? sources.join(" | ") : "None"
+    }
+
+    private getModeLabel(): string {
+        const mode = [
+            this.config.continuousSession ? "Continuous ON" : "Continuous OFF",
+            this.config.sleepEnabled ? `Sleep ${this.config.sleepStart} +${this.config.sleepDuration}h` : "Sleep OFF",
+            this.config.chaosEnabled ? "Chaos ON" : "Chaos OFF"
+        ]
+        return mode.join(" | ")
+    }
+
     private isSleepTime(): boolean {
         if (!this.config.sleepEnabled || !this.config.sleepStart) return false
 
