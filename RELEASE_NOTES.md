@@ -1,3 +1,33 @@
+# SocialRadar - Version 1.2.1 (Refresh Flow & Automation Expansion)
+Date: 2026-03-19
+
+## Milestone Summary
+This patch release improves account refresh reliability, expands automation capabilities, and hardens long-running bot behavior for day-to-day operations.
+
+## Key Features
+
+### 1. Refresh Account Workflow
+- **Refresh Control Update**: Dashboard top action is now `Refresh` with clearer intent.
+- **Active Account Detection**: Refresh now validates the currently logged-in Instagram account before loading data.
+- **Context Auto-Switch**: If the active Instagram account differs from dashboard context, SocialRadar switches and reloads the panel data automatically.
+- **First-Time Bootstrap**: On first load of an account, the flow now performs initial profile refresh, stats sync, and deep scan bootstrap.
+
+### 2. Bot Engine Expansion
+- **Comments Automation**: Added comment posting flow with configurable session comment limit and templates.
+- **Direct Post Source Mode**: Bot can now navigate and operate from explicit target post URLs.
+- **Dead Account Unfollow Mode**: Optional guard to only unfollow accounts considered inactive based on configured inactivity days.
+- **Continuous Session Stability**: Loop control and runtime state handling were hardened to reduce freeze/stall scenarios.
+
+### 3. Data & UI Hardening
+- **Avatar/Image Sanitization**: Improved URL sanitization and fallbacks for profile/media images.
+- **Engagement Metric Protection**: Avoids replacing valid engagement/trust values with blocked/empty snapshots.
+- **Dashboard Cleanup**: Removed temporary operational diagnostics panel from the main view.
+
+### 4. Documentation Improvements
+- **Professional README Rewrite**: Replaced default template content with product-focused architecture, setup, release flow, and operational notes.
+
+---
+
 # SocialRadar - Version 1.2.0 (Hardening & State Consistency)
 Date: 2026-03-18
 
