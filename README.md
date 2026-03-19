@@ -1,33 +1,126 @@
-This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
+# SocialRadar
 
-## Getting Started
+SocialRadar is a Chrome Extension (Manifest V3) for Instagram growth operations with account-aware automation, analytics, and operator tooling.
 
-First, run the development server:
+Built with Plasmo + React + TypeScript, it combines:
+- A dashboard for strategy setup and performance tracking
+- A popup for quick controls
+- A content-side bot engine that executes actions with configurable pacing
+- Background jobs for periodic profile refresh and state sync
+
+## Core Capabilities
+
+- Multi-account state isolation (per-username storage keys)
+- Configurable action modules: likes, follows, comments, unfollow
+- Source strategies: hashtags, competitors, direct post URLs
+- Session controls and limits for safer execution windows
+- Competitor monitoring and comparative metrics
+- Deep Scan workflow for follower/unfollower analysis
+- Live mission overlay on Instagram pages
+
+## Tech Stack
+
+- Framework: Plasmo (`0.90.x`)
+- UI: React 18, TailwindCSS, Lucide icons, Recharts
+- Data: `@plasmohq/storage`, Supabase (`@supabase/supabase-js`)
+- Language: TypeScript
+
+## Project Structure
+
+- `tabs/dashboard.tsx`: Main control panel and analytics UI
+- `popup.tsx`: Compact extension popup
+- `contents/botWork.ts`: Core automation engine executed in Instagram pages
+- `background.ts`: Service worker alarms and background refresh tasks
+- `lib/instagramApi.ts`: Instagram profile fetch/scraping + sync utilities
+- `components/`: Auth and shared UI blocks
+
+## Requirements
+
+- Node.js 18+ (Node 20 LTS recommended)
+- npm 9+
+- Chrome/Chromium (MV3 extension loading enabled)
+- Active Instagram session in browser
+- Optional: Supabase project credentials for sync features
+
+## Local Development
+
+Install dependencies:
 
 ```bash
-pnpm dev
-# or
+npm install
+```
+
+Run dev mode:
+
+```bash
 npm run dev
 ```
 
-Open your browser and load the appropriate development build. For example, if you are developing for the chrome browser, using manifest v3, use: `build/chrome-mv3-dev`.
+Load the extension from:
 
-You can start editing the popup by modifying `popup.tsx`. It should auto-update as you make changes. To add an options page, simply add a `options.tsx` file to the root of the project, with a react component default exported. Likewise to add a content page, add a `content.ts` file to the root of the project, importing some module and do some logic, then reload the extension on your browser.
+```text
+build/chrome-mv3-dev
+```
 
-For further guidance, [visit our Documentation](https://docs.plasmo.com/)
+Notes for Windows/OneDrive users:
+- File locking can break `plasmo dev` with `UNKNOWN read` / access errors.
+- If that happens, run the project from a non-OneDrive path (for example `C:\dev\...`) and mirror `build/chrome-mv3-dev` back if needed.
 
-## Making production build
-
-Run the following:
+## Production Build
 
 ```bash
-pnpm build
-# or
 npm run build
 ```
 
-This should create a production bundle for your extension, ready to be zipped and published to the stores.
+Configured output directory:
 
-## Submit to the webstores
+```text
+../extension-build
+```
 
-The easiest way to deploy your Plasmo extension is to use the built-in [bpp](https://bpp.browser.market) GitHub action. Prior to using this action however, make sure to build your extension and upload the first version to the store to establish the basic credentials. Then, simply follow [this setup instruction](https://docs.plasmo.com/framework/workflows/submit) and you should be on your way for automated submission!
+Package build:
+
+```bash
+npm run package
+```
+
+## Quality Checks
+
+Type check:
+
+```bash
+npm run typecheck
+```
+
+## Permissions (Manifest)
+
+SocialRadar requests:
+- `storage`, `scripting`, `unlimitedStorage`, `cookies`, `tabs`, `alarms`
+- Host permissions for Instagram and required assets endpoints
+
+Review `package.json` manifest section before release.
+
+## Release Workflow
+
+1. Update version in `package.json`
+2. Build and validate extension manually in Chrome
+3. Update `RELEASE_NOTES.md`
+4. Commit and tag release
+5. Publish artifacts (zip/package) and update distribution references if required
+
+## Security and Operational Notes
+
+- Avoid hardcoding secrets in source files.
+- Keep Supabase keys and deployment credentials in secure channels.
+- Instagram endpoints and HTML structures change frequently; scraper fallbacks should be regression-tested before each release.
+
+## Legal and Platform Compliance
+
+This project automates interactions on third-party platforms. You are responsible for:
+- Complying with Instagram Terms of Use and local regulations
+- Defining safe rate limits and operator controls
+- Using the software ethically and within your risk tolerance
+
+## Repository
+
+- GitHub: [cfieiras/SocialRadar](https://github.com/cfieiras/SocialRadar)
