@@ -12,13 +12,15 @@ import {
     CheckCircle2, Circle, UserPlus, Trash2, AlertTriangle, Activity, X, Radar, Send, Monitor, Moon, RefreshCw
 } from "lucide-react"
 import "../style.css"
-import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, sanitizeImageUrl, type Unfollower } from "../lib/instagramApi"
+import socialRadarLogo from "url:~assets/social_radar_logo.png"
+import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
 import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
 
 const GIST_VERSION_URL = "https://gist.githubusercontent.com/cfieiras/a74789aead58df67812f31099ffe7e02/raw/social-radar-version.json"
 const REPO_RELEASES_URL = "https://github.com/cfieiras/SocialRadar/releases/latest"
+const ENABLE_FIRST_TIME_DASHBOARD_GUIDE = false
 
 
 const Sparkline = ({ data, dataKey, color }: { data: any[], dataKey: string, color: string }) => {
@@ -31,6 +33,95 @@ const Sparkline = ({ data, dataKey, color }: { data: any[], dataKey: string, col
                     <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />
                 </LineChart>
             </ResponsiveContainer>
+        </div>
+    )
+}
+
+function BetaBadge({ label = "Beta", className = "" }: { label?: string, className?: string }) {
+    return (
+        <span className={`inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-amber-300 ${className}`}>
+            {label}
+        </span>
+    )
+}
+
+function getSessionReportPresentation(isRunning: boolean, stopReason?: string) {
+    const normalizedReason = (stopReason || "").toLowerCase()
+
+    if (isRunning) {
+        return {
+            badgeLabel: "CURRENT SESSION",
+            title: "Running...",
+            accentClass: "text-emerald-500",
+            iconWrapClass: "bg-emerald-500/10 text-emerald-500",
+            borderClass: "border-emerald-500/30",
+            Icon: Play
+        }
+    }
+
+    if (normalizedReason.includes("session lost") || normalizedReason.includes("logout") || normalizedReason.includes("session expired")) {
+        return {
+            badgeLabel: "LAST SESSION REPORT",
+            title: "Paused: Session Expired",
+            accentClass: "text-amber-400",
+            iconWrapClass: "bg-amber-500/10 text-amber-400",
+            borderClass: "border-amber-500/20",
+            Icon: AlertTriangle
+        }
+    }
+
+    if (normalizedReason.includes("account changed") || normalizedReason.includes("account switch")) {
+        return {
+            badgeLabel: "LAST SESSION REPORT",
+            title: "Stopped: Account Switched",
+            accentClass: "text-sky-400",
+            iconWrapClass: "bg-sky-500/10 text-sky-400",
+            borderClass: "border-sky-500/20",
+            Icon: RefreshCw
+        }
+    }
+
+    if (normalizedReason.includes("manual")) {
+        return {
+            badgeLabel: "LAST SESSION REPORT",
+            title: "Stopped Manually",
+            accentClass: "text-slate-500",
+            iconWrapClass: "bg-slate-800 text-slate-400",
+            borderClass: "border-slate-800",
+            Icon: Pause
+        }
+    }
+
+    return {
+        badgeLabel: "LAST SESSION REPORT",
+        title: stopReason || "Session Ended",
+        accentClass: "text-rose-500",
+        iconWrapClass: "bg-rose-500/10 text-rose-500",
+        borderClass: "border-slate-800",
+        Icon: AlertTriangle
+    }
+}
+
+function GuideStep({
+    step,
+    title,
+    description,
+    accent
+}: {
+    step: string
+    title: string
+    description: string
+    accent: string
+}) {
+    return (
+        <div className="rounded-[1.75rem] border border-white/10 bg-slate-950/70 p-5">
+            <div className="mb-4 flex items-center gap-3">
+                <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-xs font-black uppercase tracking-widest ${accent}`}>
+                    {step}
+                </div>
+                <h4 className="text-sm font-black uppercase tracking-[0.18em] text-white">{title}</h4>
+            </div>
+            <p className="text-sm leading-relaxed text-slate-400">{description}</p>
         </div>
     )
 }
@@ -103,6 +194,8 @@ function Dashboard() {
     // Release Notes Logic
     const [lastSeenVersion, setLastSeenVersion] = useStorage({ key: "lastSeenVersion", instance: storage }, "")
     const [showReleaseNotes, setShowReleaseNotes] = useState(false)
+    const [dashboardGuideSeen, setDashboardGuideSeen] = useStorage({ key: "dashboardGuideSeen", instance: storage }, false)
+    const [showDashboardGuide, setShowDashboardGuide] = useState(false)
 
     useEffect(() => {
         if (lastSeenVersion !== undefined && lastSeenVersion !== "" && lastSeenVersion !== currentVersion) {
@@ -112,6 +205,12 @@ function Dashboard() {
             setLastSeenVersion(currentVersion)
         }
     }, [lastSeenVersion, currentVersion])
+
+    useEffect(() => {
+        if (ENABLE_FIRST_TIME_DASHBOARD_GUIDE && termsAccepted && session?.isLoggedIn && dashboardGuideSeen === false) {
+            setShowDashboardGuide(true)
+        }
+    }, [termsAccepted, session?.isLoggedIn, dashboardGuideSeen])
 
     useEffect(() => {
         const timer = setTimeout(() => setChartReady(true), 1000)
@@ -142,7 +241,8 @@ function Dashboard() {
     const [displayStats, setDisplayStats] = useState<any>(null)
     const [isOutdated, setIsOutdated] = useState(false)
     const [lastSupabaseSync] = useStorage({ key: "lastSupabaseSync", instance: storage }, "")
-    const safeCurrentAvatar = sanitizeImageUrl(userStats?.avatarUrl) || `https://ui-avatars.com/api/?name=${encodeURIComponent(userStats?.username || "user")}&background=0f172a&color=fff`
+    const safeCurrentAvatar = resolveStoredAvatarUrl(userStats) || `https://ui-avatars.com/api/?name=${encodeURIComponent(userStats?.username || "user")}&background=0f172a&color=fff`
+    const sessionReportState = getSessionReportPresentation(isRunning, lastReport?.stopReason)
 
     useEffect(() => {
         const today = new Date().toISOString().split('T')[0]
@@ -267,6 +367,11 @@ function Dashboard() {
             }
         } catch (e) {
             console.error("Dashboard: refresh account failed", e)
+            void reportCriticalError({
+                area: "dashboard_refresh_active_account",
+                error: e,
+                appSurface: "dashboard"
+            })
             alert("Hubo un error al refrescar la cuenta activa.")
         }
     }
@@ -327,6 +432,11 @@ function Dashboard() {
         deadAccountDays: 45
     })
 
+    const closeDashboardGuide = async () => {
+        setShowDashboardGuide(false)
+        await setDashboardGuideSeen(true)
+    }
+
     const addTag = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && newTag.trim()) {
             setHashtags([...hashtags, newTag.startsWith("#") ? newTag : `#${newTag}`])
@@ -334,7 +444,11 @@ function Dashboard() {
         }
     }
 
-    const addCompetitor = async (e: React.KeyboardEvent | React.FocusEvent) => {
+    const addCompetitor = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key !== "Enter" || !newCompetitor.trim()) return
+
+        e.preventDefault()
+
         if (newCompetitor.trim()) {
             const raw = newCompetitor.trim()
             const fixed = raw.startsWith("@") ? raw : `@${raw}`
@@ -370,6 +484,12 @@ function Dashboard() {
                     setCompetitorsData(currentComps)
                 } catch (err) {
                     console.error("Dashboard: Quick fetch failed for competitor", err)
+                    void reportCriticalError({
+                        area: "dashboard_quick_fetch_competitor",
+                        error: err,
+                        appSurface: "dashboard",
+                        instagramUsername: username
+                    })
                     // Ensure we still show something even on error
                     const currentComps = [...(competitorsData || [])]
                     if (!currentComps.find(c => c.username === username)) {
@@ -439,6 +559,11 @@ function Dashboard() {
             setShowFeedbackModal(false)
         } catch (e) {
             console.error("Error sending feedback:", e)
+            void reportCriticalError({
+                area: "dashboard_submit_feedback",
+                error: e,
+                appSurface: "dashboard"
+            })
             alert("Error al enviar la sugerencia. Por favor intenta nuevamente.")
         } finally {
             setIsSubmittingFeedback(false)
@@ -579,11 +704,95 @@ function Dashboard() {
 
     return (
         <div className="flex h-screen bg-slate-950 text-slate-50 font-sans overflow-hidden">
+            {showDashboardGuide && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 px-6 py-10 backdrop-blur-md">
+                    <div className="relative w-full max-w-4xl overflow-hidden rounded-[2.5rem] border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/40">
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.18),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(59,130,246,0.16),transparent_28%)] pointer-events-none" />
+                        <div className="relative z-10 p-8 md:p-10">
+                            <div className="mb-8 flex items-start justify-between gap-6">
+                                <div className="max-w-2xl">
+                                    <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-emerald-300">
+                                        Welcome
+                                    </div>
+                                    <h2 className="text-4xl font-black tracking-tighter text-white">How the bot works</h2>
+                                    <p className="mt-3 text-sm leading-relaxed text-slate-400">
+                                        This is a quick setup guide for first-time users. Start with Strategy, choose your targeting sources,
+                                        turn on only the modules you want, and launch the bot when your account is ready.
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={closeDashboardGuide}
+                                    className="rounded-2xl border border-white/10 bg-white/5 p-3 text-slate-400 transition-colors hover:text-white"
+                                >
+                                    <X className="h-5 w-5" />
+                                </button>
+                            </div>
+
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <GuideStep
+                                    step="1"
+                                    title="Choose Strategy"
+                                    description="Go to Strategy & Source and decide where the bot should find people: hashtags, competitors, or specific posts."
+                                    accent="bg-primary-500/15 text-primary-300 border border-primary-500/20"
+                                />
+                                <GuideStep
+                                    step="2"
+                                    title="Activate Modules"
+                                    description="Turn on the actions you want to allow, like follows, likes, comments, or auto-unfollow. Beta features are marked inside the panel."
+                                    accent="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
+                                />
+                                <GuideStep
+                                    step="3"
+                                    title="Review Safety"
+                                    description="Check delays, session limits, and unfollow maturity in Settings before running long sessions. Start conservative on new accounts."
+                                    accent="bg-amber-500/15 text-amber-300 border border-amber-500/20"
+                                />
+                                <GuideStep
+                                    step="4"
+                                    title="Launch And Monitor"
+                                    description="Press Launch Bot, let the session run, and use Dashboard plus Churn Analysis to monitor results, queue health, and unfollows."
+                                    accent="bg-sky-500/15 text-sky-300 border border-sky-500/20"
+                                />
+                            </div>
+
+                            <div className="mt-8 rounded-[2rem] border border-white/10 bg-slate-950/60 p-6">
+                                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Recommended first run</p>
+                                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                                    <button
+                                        onClick={() => {
+                                            setActiveTab("targeting")
+                                            void closeDashboardGuide()
+                                        }}
+                                        className="rounded-2xl bg-primary-600 px-5 py-4 text-left text-sm font-black text-white transition-all hover:bg-primary-500"
+                                    >
+                                        Open Strategy
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setActiveTab("settings")
+                                            void closeDashboardGuide()
+                                        }}
+                                        className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-left text-sm font-black text-slate-200 transition-all hover:bg-white/10"
+                                    >
+                                        Review Settings
+                                    </button>
+                                    <button
+                                        onClick={closeDashboardGuide}
+                                        className="rounded-2xl border border-white/10 bg-slate-950 px-5 py-4 text-left text-sm font-black text-slate-400 transition-all hover:text-white"
+                                    >
+                                        I got it
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* Sidebar */}
             <aside className="w-80 bg-slate-900/50 border-r border-slate-800 flex flex-col p-8 backdrop-blur-xl">
                 <div className="flex items-center gap-3 mb-12 px-2">
-                    <div className="w-10 h-10 bg-gradient-to-tr from-emerald-600 to-teal-400 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                        <Radar className="text-white w-6 h-6" />
+                    <div className="w-10 h-10 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center shadow-lg shadow-emerald-500/10 overflow-hidden">
+                        <img src={socialRadarLogo} alt="SocialRadar logo" className="w-8 h-8 object-contain" />
                     </div>
                     <div>
                         <h1 className="text-xl font-outfit font-bold tracking-tight text-white">SocialRadar</h1>
@@ -594,7 +803,7 @@ function Dashboard() {
                 <nav className="space-y-3 flex-grow">
                     {[
                         { id: "overview", label: "Dashboard", icon: BarChart3 },
-                        { id: "competitors", label: "Competitor Analysis", icon: Users },
+                        { id: "competitors", label: "Competitor Analysis", icon: Users, beta: true },
                         { id: "targeting", label: "Strategy & Source", icon: Search },
                         { id: "unfollow", label: "Unfollow Tracker", icon: UserPlus }, // New Tab
                         { id: "settings", label: "Settings", icon: Settings },
@@ -610,6 +819,7 @@ function Dashboard() {
                         >
                             <item.icon className={`w-5 h-5 ${activeTab === item.id ? "text-white" : "group-hover:text-primary-400"}`} />
                             <span className="font-bold tracking-tight">{item.label}</span>
+                            {item.beta && <BetaBadge className={`${activeTab === item.id ? "border-white/25 bg-white/15 text-white" : ""} ml-auto`} />}
                         </button>
                     ))}
                 </nav>
@@ -754,18 +964,18 @@ function Dashboard() {
                             )}
 
                             {(isRunning || lastReport) && (
-                                <div className={`bg-slate-900/60 border ${isRunning ? 'border-emerald-500/30' : 'border-slate-800'} rounded-[2rem] p-6 mb-8 flex items-center justify-between animate-in fade-in slide-in-from-top-4`}>
+                                <div className={`bg-slate-900/60 border ${sessionReportState.borderClass} rounded-[2rem] p-6 mb-8 flex items-center justify-between animate-in fade-in slide-in-from-top-4`}>
                                     <div className="flex items-center gap-6">
-                                        <div className={`p-4 rounded-2xl ${isRunning ? "bg-emerald-500/10 text-emerald-500" : (lastReport?.stopReason.includes("Manual") ? "bg-slate-800 text-slate-400" : "bg-rose-500/10 text-rose-500")}`}>
-                                            {isRunning ? <Play className="w-6 h-6 animate-pulse" /> : (lastReport?.stopReason.includes("Manual") ? <Pause className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />)}
+                                        <div className={`p-4 rounded-2xl ${sessionReportState.iconWrapClass}`}>
+                                            <sessionReportState.Icon className={`w-6 h-6 ${isRunning ? "animate-pulse" : ""}`} />
                                         </div>
                                         <div>
-                                            <h4 className={`text-xs font-black uppercase tracking-widest ${isRunning ? "text-emerald-500" : "text-slate-500"} mb-1`}>{isRunning ? "CURRENT SESSION" : "LAST SESSION REPORT"}</h4>
+                                            <h4 className={`text-xs font-black uppercase tracking-widest ${sessionReportState.accentClass} mb-1`}>{sessionReportState.badgeLabel}</h4>
                                             <div className="flex items-center gap-3">
-                                                <h3 className="text-xl font-bold text-white">{isRunning ? "Running..." : lastReport?.stopReason}</h3>
+                                                <h3 className="text-xl font-bold text-white">{sessionReportState.title}</h3>
                                                 <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 text-[10px] font-mono">{isRunning ? elapsedTime : lastReport?.durationStr}</span>
                                             </div>
-                                            {!isRunning && lastReport && <p className="text-xs text-slate-400 mt-1">ended at {new Date(lastReport.endTime).toLocaleTimeString()} on {new Date(lastReport.endTime).toLocaleDateString()}</p>}
+                                            {!isRunning && lastReport && <p className="text-xs text-slate-400 mt-1">{lastReport?.stopReason} • ended at {new Date(lastReport.endTime).toLocaleTimeString()} on {new Date(lastReport.endTime).toLocaleDateString()}</p>}
                                         </div>
                                     </div>
                                     <div className="flex gap-8 pr-4">
@@ -1464,7 +1674,7 @@ function Dashboard() {
                                             { id: "likeEnabled", label: "Automated Likes", icon: Heart, color: "text-rose-400" },
                                             { id: "followEnabled", label: "Smart Follow", icon: UserPlus, color: "text-blue-400" },
                                             { id: "unfollowEnabled", label: "Auto-Unfollow (Clean)", icon: Trash2, color: "text-amber-400" },
-                                            { id: "dmEnabled", label: "Comments Auto-Pilot", icon: MessageSquare, color: "text-emerald-400" }
+                                            { id: "dmEnabled", label: "Comments Auto-Pilot", icon: MessageSquare, color: "text-emerald-400", beta: true }
                                         ].map(item => (
                                             <button
                                                 key={item.id}
@@ -1477,6 +1687,7 @@ function Dashboard() {
                                                 <div className="flex items-center gap-4">
                                                     <item.icon className={`w-5 h-5 ${item.color}`} />
                                                     <span className="font-bold text-white">{item.label}</span>
+                                                    {item.beta && <BetaBadge />}
                                                 </div>
                                                 {config[item.id] ? <CheckCircle2 className="w-6 h-6 text-primary-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
                                                 {item.label.includes("(Dev)") && <span className="absolute top-2 right-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-500 text-[8px] font-bold rounded uppercase">In Dev</span>}
@@ -1491,7 +1702,7 @@ function Dashboard() {
                                         {[
                                             { id: "sourceHashtags", label: "Monitor Hashtags", icon: Search, color: "text-indigo-400" },
                                             { id: "sourceCompetitors", label: "Target Competitors", icon: Zap, color: "text-primary-400" },
-                                            { id: "sourcePosts", label: "Specific Posts Targeting", icon: Heart, color: "text-rose-400" }
+                                            { id: "sourcePosts", label: "Specific Posts Targeting", icon: Heart, color: "text-rose-400", beta: true }
                                         ].map(sourceItem => (
                                             <button
                                                 key={sourceItem.id}
@@ -1504,6 +1715,7 @@ function Dashboard() {
                                                 <div className="flex items-center gap-4">
                                                     <sourceItem.icon className={`w-5 h-5 ${sourceItem.color}`} />
                                                     <span className="font-bold text-white">{sourceItem.label}</span>
+                                                    {sourceItem.beta && <BetaBadge />}
                                                 </div>
                                                 {config[sourceItem.id] ? <CheckCircle2 className="w-6 h-6 text-primary-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
                                             </button>
@@ -1664,6 +1876,7 @@ function Dashboard() {
                                                 <p className="text-sm text-slate-500 font-medium">El bot no se detiene al completar tareas. Reinicia automáticamente cada día.</p>
                                             </div>
                                         </div>
+                                        <BetaBadge className="mr-4" />
                                         <button
                                             onClick={() => setConfig({ ...config, continuousSession: !config?.continuousSession })}
                                             className={`flex items-center gap-3 px-6 py-3 rounded-xl font-bold transition-all ${config?.continuousSession
@@ -1967,6 +2180,7 @@ function Dashboard() {
                                             <h3 className="text-sm font-black text-white uppercase tracking-[0.2em] mb-2">Dead Accounts Cleanup</h3>
                                             <p className="text-xs text-slate-500">Only unfollow accounts with no recent activity.</p>
                                         </div>
+                                        <BetaBadge className="mr-4" />
                                         <button
                                             onClick={() => setConfig({ ...config, onlyDeadAccountUnfollow: !config?.onlyDeadAccountUnfollow })}
                                             className={`px-5 py-2 rounded-xl text-xs font-black transition-all ${config?.onlyDeadAccountUnfollow ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-400"}`}
@@ -2465,3 +2679,5 @@ function Dashboard() {
 }
 
 export default Dashboard
+
+

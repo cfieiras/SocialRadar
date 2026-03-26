@@ -6,16 +6,50 @@ const storage = new Storage({
 })
 
 const accountKey = (username: string, key: string) => `${username}_${key}`
+const STABLE_HISTORY_TABLE = "account_daily_snapshots"
+const LEGACY_HISTORY_TABLE = "follower_history"
+
+type DailySnapshotRow = {
+    snapshot_date?: string
+    captured_at?: string
+    created_at?: string
+    followers?: number
+    following?: number
+    posts?: number
+    trust_score?: number | null
+    engagement_rate?: number | null
+    follower_count?: number
+    following_count?: number
+    posts_count?: number
+    account_trust_score?: number | null
+}
 
 export function sanitizeImageUrl(url?: string | null): string {
     if (!url) return ""
     return String(url).replace(/\\u0026/g, '&').replace(/\\/g, '').trim()
 }
 
+export function extractBestAvatarUrl(user?: Record<string, any> | null, fallbackUrl?: string | null): string {
+    const candidate = user?.profile_pic_url_hd ||
+        user?.profile_pic_url ||
+        user?.profilePicUrl ||
+        user?.hd_profile_pic_url_info?.url ||
+        user?.profile_pic_url_info?.url ||
+        fallbackUrl ||
+        ""
+
+    return sanitizeImageUrl(candidate)
+}
+
+export function resolveStoredAvatarUrl(profile?: Pick<InstagramProfile, "avatarDisplayUrl" | "avatarUrl"> | null): string {
+    return sanitizeImageUrl(profile?.avatarDisplayUrl || profile?.avatarUrl || "")
+}
+
 export interface InstagramProfile {
     username: string
     fullName: string
     avatarUrl: string
+    avatarDisplayUrl?: string
     bio: string
     stats: {
         posts: number
@@ -45,6 +79,14 @@ export interface Unfollower {
     detected_at: string
 }
 
+interface CriticalErrorPayload {
+    area: string
+    error: unknown
+    appSurface?: string
+    instagramUsername?: string | null
+    context?: Record<string, unknown>
+}
+
 export async function getStoredCurrentUserProfile(username?: string): Promise<InstagramProfile | null> {
     if (username) {
         return await storage.get<InstagramProfile>(accountKey(username, "currentUserStats")) || null
@@ -53,9 +95,79 @@ export async function getStoredCurrentUserProfile(username?: string): Promise<In
     return await storage.get<InstagramProfile>("currentUserStats") || null
 }
 
+export async function reportCriticalError(payload: CriticalErrorPayload) {
+    try {
+        const currentProfile = await getStoredCurrentUserProfile(payload.instagramUsername || undefined)
+        const { data: { session } } = await supabase.auth.getSession()
+        const runtimeVersion = typeof chrome !== "undefined" && chrome.runtime?.getManifest
+            ? chrome.runtime.getManifest().version
+            : null
+
+        const error = payload.error instanceof Error ? payload.error : new Error(String(payload.error ?? "Unknown error"))
+
+        const { error: insertError } = await supabase
+            .from("critical_error_logs")
+            .insert({
+                user_id: session?.user?.id || null,
+                instagram_username: payload.instagramUsername || currentProfile?.username || null,
+                area: payload.area,
+                message: error.message,
+                stack_trace: error.stack || null,
+                app_surface: payload.appSurface || "extension",
+                severity: "critical",
+                extension_version: runtimeVersion,
+                context: payload.context || {}
+            })
+
+        if (insertError) {
+            console.warn("Telemetry: failed to persist critical error", insertError.message || insertError)
+        }
+    } catch (telemetryError) {
+        console.warn("Telemetry: reporting pipeline failed", telemetryError)
+    }
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+    return await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : "")
+        reader.onerror = () => reject(reader.error || new Error("Failed to read avatar blob"))
+        reader.readAsDataURL(blob)
+    })
+}
+
+async function buildAvatarDisplayUrl(url?: string | null): Promise<string> {
+    const sanitized = sanitizeImageUrl(url)
+    if (!sanitized || sanitized.startsWith("data:")) return sanitized
+
+    try {
+        const response = await fetch(sanitized, {
+            credentials: "include",
+            cache: "no-store"
+        })
+
+        if (!response.ok) return sanitized
+
+        const blob = await response.blob()
+        if (!blob.size || blob.size > 1024 * 1024) return sanitized
+
+        return await blobToDataUrl(blob)
+    } catch {
+        return sanitized
+    }
+}
+
 export async function storeCurrentUserProfile<T extends InstagramProfile>(profile: T) {
-    await storage.set("currentUserStats", profile)
-    await storage.set(accountKey(profile.username, "currentUserStats"), profile)
+    const avatarUrl = extractBestAvatarUrl(profile, profile.avatarUrl)
+    const avatarDisplayUrl = await buildAvatarDisplayUrl(profile.avatarDisplayUrl || avatarUrl)
+    const enrichedProfile = {
+        ...profile,
+        avatarUrl,
+        avatarDisplayUrl
+    }
+
+    await storage.set("currentUserStats", enrichedProfile)
+    await storage.set(accountKey(profile.username, "currentUserStats"), enrichedProfile)
 }
 
 /**
@@ -128,7 +240,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
 
         console.log("IG API: Fetched user data for", user.username)
 
-        let avatarUrl = sanitizeImageUrl(user.profile_pic_url_hd || user.profile_pic_url)
+        let avatarUrl = extractBestAvatarUrl(user)
 
         // 2. Extract media/posts data
         let mediaEdges = user.edge_owner_to_timeline_media?.edges ||
@@ -297,7 +409,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         const profileData: InstagramProfile = {
             username: user.username,
             fullName: user.full_name,
-            avatarUrl: sanitizeImageUrl(avatarUrl || existingProfile?.avatarUrl || ""),
+            avatarUrl: extractBestAvatarUrl(user, avatarUrl || existingProfile?.avatarUrl || ""),
             bio: user.biography,
             stats: {
                 posts: user.edge_owner_to_timeline_media?.count || 0,
@@ -323,6 +435,15 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         return profileData
     } catch (error) {
         console.error("IG API: Error", error)
+        await reportCriticalError({
+            area: "refresh_user_profile",
+            error,
+            appSurface: "extension_api",
+            instagramUsername: targetUsername || null,
+            context: {
+                targetUsername: targetUsername || null
+            }
+        })
         return null
     }
 }
@@ -381,71 +502,100 @@ export async function syncStatsToSupabase(profile: InstagramProfile) {
         }
 
         const today = new Date().toISOString().split('T')[0]
-
-        // Check for existing entry for today (UTC based)
-        const { data: existingData } = await supabase
-            .from('follower_history')
-            .select('id')
-            .eq('user_id', session.user.id)
-            .eq('instagram_username', profile.username)
-            .gte('created_at', `${today}T00:00:00`)
-            .lt('created_at', `${today}T23:59:59`)
-            .order('created_at', { ascending: false })
-            .limit(1)
-
-        const existing = existingData?.[0]
-
-        const payload: any = {
+        const stablePayload: any = {
             user_id: session.user.id,
             instagram_username: profile.username,
-            follower_count: profile.stats.followers,
-            following_count: profile.stats.following,
-            posts_count: profile.stats.posts
+            snapshot_date: today,
+            followers: profile.stats.followers,
+            following: profile.stats.following,
+            posts: profile.stats.posts,
+            captured_at: new Date().toISOString(),
+            source: "extension_manual_sync",
+            engagement_rate: profile.engagementRate > 0 ? profile.engagementRate : null,
+            trust_score: profile.trustScore > 0 ? profile.trustScore : null
         }
 
-        // Only include quality metrics if they are valid (> 0)
-        // Otherwise sending null allows frontend to distinguish "no data" from "0%"
-        if (profile.engagementRate > 0) payload.engagement_rate = profile.engagementRate
-        else payload.engagement_rate = null
+        const stableRes = await supabase
+            .from(STABLE_HISTORY_TABLE)
+            .upsert(stablePayload, {
+                onConflict: "user_id,instagram_username,snapshot_date"
+            })
 
-        if (profile.trustScore > 0) payload.account_trust_score = profile.trustScore
-        else payload.account_trust_score = null
+        let error = stableRes.error
+        let storageMode = "stable"
 
-        let error = null
-        if (existing) {
-            console.log("IG API: Updating today's stats...")
+        if (error && String(error.message || "").toLowerCase().includes(STABLE_HISTORY_TABLE)) {
+            console.warn("IG API: Stable history table missing, falling back to follower_history")
 
-            // Only update fields that have meaningful data to avoid zero-overwrites
-            const updatePayload: any = {
+            const { data: existingData } = await supabase
+                .from(LEGACY_HISTORY_TABLE)
+                .select('id')
+                .eq('user_id', session.user.id)
+                .eq('instagram_username', profile.username)
+                .gte('created_at', `${today}T00:00:00`)
+                .lt('created_at', `${today}T23:59:59`)
+                .order('created_at', { ascending: false })
+                .limit(1)
+
+            const existing = existingData?.[0]
+            const payload: any = {
+                user_id: session.user.id,
+                instagram_username: profile.username,
                 follower_count: profile.stats.followers,
                 following_count: profile.stats.following,
-                posts_count: profile.stats.posts
+                posts_count: profile.stats.posts,
+                engagement_rate: profile.engagementRate > 0 ? profile.engagementRate : null,
+                account_trust_score: profile.trustScore > 0 ? profile.trustScore : null
             }
 
-            if (profile.engagementRate > 0) updatePayload.engagement_rate = profile.engagementRate
-            if (profile.trustScore > 0) updatePayload.account_trust_score = profile.trustScore
+            if (existing) {
+                const updatePayload: any = {
+                    follower_count: profile.stats.followers,
+                    following_count: profile.stats.following,
+                    posts_count: profile.stats.posts
+                }
 
-            const res = await supabase
-                .from('follower_history')
-                .update(updatePayload)
-                .eq('id', existing.id)
-            error = res.error
-        } else {
-            console.log("IG API: Inserting new stats...")
-            const res = await supabase
-                .from('follower_history')
-                .insert(payload)
-            error = res.error
+                if (profile.engagementRate > 0) updatePayload.engagement_rate = profile.engagementRate
+                if (profile.trustScore > 0) updatePayload.account_trust_score = profile.trustScore
+
+                const res = await supabase
+                    .from(LEGACY_HISTORY_TABLE)
+                    .update(updatePayload)
+                    .eq('id', existing.id)
+                error = res.error
+            } else {
+                const res = await supabase
+                    .from(LEGACY_HISTORY_TABLE)
+                    .insert(payload)
+                error = res.error
+            }
+
+            storageMode = "legacy"
         }
 
         if (!error) {
             await storage.set("lastSupabaseSync", today)
-            console.log("IG API: Synced to Supabase ✅")
+            console.log(`IG API: Synced daily metrics to Supabase (${storageMode}) ✅`)
         } else {
             console.error("IG API: Supabase sync error:", error.message || JSON.stringify(error))
+            await reportCriticalError({
+                area: "sync_stats_to_supabase",
+                error,
+                appSurface: "extension_api",
+                instagramUsername: profile.username,
+                context: {
+                    storageMode
+                }
+            })
         }
     } catch (err) {
         console.error("IG API: Sync failed", err)
+        await reportCriticalError({
+            area: "sync_stats_to_supabase",
+            error: err,
+            appSurface: "extension_api",
+            instagramUsername: profile.username
+        })
     }
 }
 
@@ -454,32 +604,56 @@ export async function fetchHistoryFromSupabase(username: string) {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session || !username) return []
 
-        const { data } = await supabase
-            .from('follower_history')
+        const stableRes = await supabase
+            .from(STABLE_HISTORY_TABLE)
+            .select('*')
+            .eq('user_id', session.user.id)
+            .eq('instagram_username', username)
+            .order('snapshot_date', { ascending: false })
+            .limit(30)
+
+        if (!stableRes.error && stableRes.data) {
+            return stableRes.data.map((d: DailySnapshotRow) => ({
+                date: d.snapshot_date!,
+                timestamp: new Date(d.captured_at || d.snapshot_date!).getTime(),
+                followers: d.followers ?? 0,
+                following: d.following ?? 0,
+                engagementRate: d.engagement_rate ?? null,
+                trustScore: d.trust_score ?? null
+            }))
+        }
+
+        if (stableRes.error && !String(stableRes.error.message || "").toLowerCase().includes(STABLE_HISTORY_TABLE)) {
+            console.error("IG API: Error fetching stable daily history", stableRes.error)
+            return []
+        }
+
+        const legacyRes = await supabase
+            .from(LEGACY_HISTORY_TABLE)
             .select('*')
             .eq('user_id', session.user.id)
             .eq('instagram_username', username)
             .order('created_at', { ascending: false })
             .limit(30)
 
+        const data = legacyRes.data
         if (!data) return []
 
-        // Filter unique dates (keep latest per day)
-        const uniqueData = data.reduce((acc: any[], current) => {
-            const date = current.created_at.split('T')[0]
-            if (!acc.find(item => item.created_at.split('T')[0] === date)) {
+        const uniqueData = data.reduce((acc: DailySnapshotRow[], current: DailySnapshotRow) => {
+            const date = current.created_at?.split('T')[0]
+            if (date && !acc.find(item => item.created_at?.split('T')[0] === date)) {
                 acc.push(current)
             }
             return acc
         }, [])
 
-        return uniqueData.map(d => ({
-            date: d.created_at.split('T')[0],
-            timestamp: new Date(d.created_at).getTime(),
-            followers: d.follower_count,
-            following: d.following_count,
-            engagementRate: d.engagement_rate,
-            trustScore: d.account_trust_score
+        return uniqueData.map((d: DailySnapshotRow) => ({
+            date: d.created_at!.split('T')[0],
+            timestamp: new Date(d.created_at!).getTime(),
+            followers: d.follower_count ?? 0,
+            following: d.following_count ?? 0,
+            engagementRate: d.engagement_rate ?? null,
+            trustScore: d.account_trust_score ?? null
         }))
     } catch (err) {
         console.error("IG API: Error fetching history", err)
@@ -584,6 +758,16 @@ export async function runDeepScan(onProgress?: (count: number) => void) {
         return unfollowersList
     } catch (err) {
         console.error("IG API: Deep Scan failed", err)
+        await reportCriticalError({
+            area: "run_deep_scan",
+            error: err,
+            appSurface: "extension_api",
+            instagramUsername: stats?.username || null,
+            context: {
+                followerCountAttempted: followers.length
+            }
+        })
         throw err
     }
 }
+

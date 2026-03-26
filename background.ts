@@ -1,5 +1,5 @@
 import { Storage } from "@plasmohq/storage"
-import { refreshUserProfile, syncStatsToSupabase, type InstagramProfile } from "./lib/instagramApi"
+import { refreshUserProfile, reportCriticalError, syncStatsToSupabase, type InstagramProfile } from "./lib/instagramApi"
 
 const storage = new Storage()
 
@@ -31,12 +31,17 @@ async function safeRefreshProfile() {
             lastBackgroundRefreshStatus: "ok"
         })
     } catch (error) {
-        console.error("GrowthBot: Failed to refresh profile in background", error)
+        console.error("SocialRadar: Failed to refresh profile in background", error)
         await storage.set("systemHealth", {
             ...(await storage.get("systemHealth") || {}),
             lastBackgroundRefreshAt: Date.now(),
             lastBackgroundRefreshStatus: "error",
             lastBackgroundError: error instanceof Error ? error.message : String(error)
+        })
+        await reportCriticalError({
+            area: "background_refresh_profile",
+            error,
+            appSurface: "background_worker"
         })
     }
 }
@@ -45,7 +50,7 @@ async function safeRefreshProfile() {
 chrome.runtime.onInstalled.addListener(async () => {
     await ensureBackgroundState()
     await safeRefreshProfile()
-    console.log("GrowthBot: Background service worker initialized with continuous session support")
+    console.log("SocialRadar: Background service worker initialized with continuous session support")
 })
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -55,12 +60,12 @@ chrome.runtime.onStartup.addListener(async () => {
 // Listen for alarms
 chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === "REFRESH_STATS") {
-        console.log("GrowthBot: Alarm triggered - Refreshing stats...")
+        console.log("SocialRadar: Alarm triggered - Refreshing stats...")
         await safeRefreshProfile()
     }
     
     if (alarm.name === "DAILY_RESET") {
-        console.log("GrowthBot: Daily reset alarm - Preparing for new session day...")
+        console.log("SocialRadar: Daily reset alarm - Preparing for new session day...")
         // Reset daily counters for continuous sessions
         await storage.set("lastNavTime", 0)
         await storage.set("dailyResetTimestamp", Date.now())
@@ -91,7 +96,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         void syncStatsToSupabase(payload)
             .then(() => sendResponse({ ok: true }))
             .catch((error) => {
-                console.error("GrowthBot: SYNC_STATS failed", error)
+                console.error("SocialRadar: SYNC_STATS failed", error)
+                void reportCriticalError({
+                    area: "background_sync_stats_message",
+                    error,
+                    appSurface: "background_worker",
+                    instagramUsername: payload.username
+                })
                 sendResponse({ ok: false, error: error instanceof Error ? error.message : "Unknown sync error" })
             })
 

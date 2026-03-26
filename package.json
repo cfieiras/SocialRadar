@@ -36,6 +36,7 @@
   "manifest": {
     "host_permissions": [
       "https://*.instagram.com/*",
+      "https://*.cdninstagram.com/*",
       "https://*.fbcdn.net/*",
       "https://raw.githubusercontent.com/*"
     ],

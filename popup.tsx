@@ -7,12 +7,76 @@ const storage = new Storage({
 import { LayoutDashboard, Play, Settings, Zap, Users, Heart, MessageSquare, ShieldCheck, Square, Lock, ArrowRight, LogIn, AlertCircle, Radar } from "lucide-react"
 import { useState, useEffect } from "react"
 import { supabase } from "./lib/supabaseClient"
-import { refreshUserProfile, sanitizeImageUrl } from "./lib/instagramApi"
+import { refreshUserProfile, resolveStoredAvatarUrl } from "./lib/instagramApi"
 import "./style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
 
 import { UpdateBanner, SubscriptionScreen, LoginScreen, SignUpScreen } from "./components/AuthScreens"
 
+function BetaBadge({ label = "Beta", className = "" }: { label?: string, className?: string }) {
+  return (
+    <span className={`inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-amber-300 ${className}`}>
+      {label}
+    </span>
+  )
+}
+
+function getBotStatusCopy(isRunning: boolean, stopReason?: string) {
+  const normalizedReason = (stopReason || "").toLowerCase()
+
+  if (isRunning) {
+    return {
+      title: "Active & Running",
+      subtitle: "Automation is currently active",
+      borderClass: "border-emerald-500/40",
+      dotClass: "bg-emerald-500 animate-pulse",
+      textClass: "text-emerald-400",
+      iconClass: "text-emerald-500/30"
+    }
+  }
+
+  if (normalizedReason.includes("session lost") || normalizedReason.includes("logout") || normalizedReason.includes("session expired")) {
+    return {
+      title: "Paused: Session Expired",
+      subtitle: "Log back into Instagram to continue",
+      borderClass: "border-amber-500/30",
+      dotClass: "bg-amber-400",
+      textClass: "text-amber-300",
+      iconClass: "text-amber-500/40"
+    }
+  }
+
+  if (normalizedReason.includes("account changed") || normalizedReason.includes("account switch")) {
+    return {
+      title: "Stopped: Account Switched",
+      subtitle: "Reload the bot for the active account",
+      borderClass: "border-sky-500/30",
+      dotClass: "bg-sky-400",
+      textClass: "text-sky-300",
+      iconClass: "text-sky-500/40"
+    }
+  }
+
+  if (normalizedReason.includes("manual")) {
+    return {
+      title: "Stopped Manually",
+      subtitle: "Ready to launch when you are",
+      borderClass: "border-white/10",
+      dotClass: "bg-slate-500",
+      textClass: "text-slate-400",
+      iconClass: "text-primary-500/30"
+    }
+  }
+
+  return {
+    title: "Standby Mode",
+    subtitle: stopReason || "Ready to launch when you are",
+    borderClass: "border-white/10",
+    dotClass: "bg-slate-500",
+    textClass: "text-slate-400",
+    iconClass: "text-primary-500/30"
+  }
+}
 
 
 
@@ -26,6 +90,7 @@ function IndexPopup() {
   const currentUsername = userStats?.username || "global"
   const [stats] = useStorage({ key: `${currentUsername}_stats`, instance: storage }, { follows: 0, likes: 0, dms: 0, unfollows: 0 })
   const [isRunning, setIsRunning] = useStorage({ key: "isRunning", instance: storage }, false)
+  const [lastReport] = useStorage({ key: `${currentUsername}_lastSessionReport`, instance: storage }, null)
   // New Auth State
   const [session, setSession] = useStorage({ key: "session", instance: storage }, { isLoggedIn: false, user: null, isPremium: false })
   const [isRegistering, setIsRegistering] = useState(false)
@@ -78,7 +143,8 @@ function IndexPopup() {
 
   // Terms of Service Gate
   const [termsAccepted] = useStorage({ key: "termsAccepted", instance: storage }, false)
-  const safeAvatarSrc = sanitizeImageUrl(userStats?.avatarUrl) || `https://ui-avatars.com/api/?name=${encodeURIComponent(userStats?.username || "user")}&background=0f172a&color=fff`
+  const safeAvatarSrc = resolveStoredAvatarUrl(userStats) || `https://ui-avatars.com/api/?name=${encodeURIComponent(userStats?.username || "user")}&background=0f172a&color=fff`
+  const botStatus = getBotStatusCopy(isRunning, lastReport?.stopReason)
 
   if (!termsAccepted) {
     return (
@@ -135,6 +201,9 @@ function IndexPopup() {
   return (
     <div className="w-[380px] min-h-[500px] p-6 bg-slate-950 text-slate-50 flex flex-col font-sans overflow-hidden relative">
       <UpdateBanner />
+      <div className="absolute top-4 right-4 z-20">
+        <BetaBadge />
+      </div>
       {/* Background Glow */}
       <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-primary-600/20 rounded-full blur-3xl" />
       <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl" />
@@ -212,18 +281,19 @@ function IndexPopup() {
 
       {/* Status Card */}
       <div
-        className={`glass-morphism rounded-2xl p-5 mb-8 flex items-center justify-between relative overflow-hidden border ${isRunning ? "border-emerald-500/40" : "border-white/10"}`}
+        className={`glass-morphism rounded-2xl p-5 mb-8 flex items-center justify-between relative overflow-hidden border ${botStatus.borderClass}`}
       >
         <div className="flex flex-col gap-1">
           <span className="text-xs text-slate-400 font-medium">System Status</span>
           <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-emerald-500 animate-pulse" : "bg-slate-500"}`} />
-            <span className={`text-sm font-semibold ${isRunning ? "text-emerald-400" : "text-slate-400"}`}>
-              {isRunning ? "Active & Running" : "Standby Mode"}
+            <div className={`w-2 h-2 rounded-full ${botStatus.dotClass}`} />
+            <span className={`text-sm font-semibold ${botStatus.textClass}`}>
+              {botStatus.title}
             </span>
           </div>
+          <span className="text-[11px] text-slate-500">{botStatus.subtitle}</span>
         </div>
-        <ShieldCheck className="w-8 h-8 text-primary-500/30" />
+        <ShieldCheck className={`w-8 h-8 ${botStatus.iconClass}`} />
       </div>
 
       {/* Actions */}

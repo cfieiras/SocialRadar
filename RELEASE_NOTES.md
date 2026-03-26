@@ -130,11 +130,11 @@ Release 1.1.7 introduces professional competitor analysis tools, enabling users 
 
 ---
 
-# IG Growth Auto Bot - Version 1.0.0 (Official Release)
+# SocialRadar - Version 1.0.0 (Official Release)
 Date: 2026-01-12
 
 ## Milestone Summary
-This is the first stable release of the IG Growth Auto Bot "Pro Edition". 
+This is the first stable release of the SocialRadar "Pro Edition". 
 It includes a complete Dashboard UI, robust automation logic, and advanced humanization features.
 
 ## Key Features

@@ -3,6 +3,7 @@ import { useStorage } from "@plasmohq/storage/hook"
 import { Storage } from "@plasmohq/storage"
 import { LayoutDashboard, Play, Settings, Zap, Users, Heart, MessageSquare, ShieldCheck, Square, Lock, ArrowRight, LogIn, AlertCircle, Radar } from "lucide-react"
 import { supabase } from "../lib/supabaseClient"
+import socialRadarLogo from "url:~assets/social_radar_logo.png"
 
 const storage = new Storage({
     area: "local"
@@ -10,6 +11,8 @@ const storage = new Storage({
 
 const REPO_OWNER = "cfieiras"
 const REPO_NAME = "SocialRadar"
+const PASSWORD_RESET_REDIRECT_URL = "https://socialradar-beta.vercel.app/reset-password"
+const CLOSED_BETA_ACCESS_EMAIL = "cristianfieiras@gmail.com"
 
 export function UpdateBanner() {
     const [updateAvailable, setUpdateAvailable] = useState<string | null>(null)
@@ -80,8 +83,8 @@ export function SubscriptionScreen({ user, onCheckPayment, onLogout }: { user: a
             <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-64 h-64 bg-primary-600/10 rounded-full blur-3xl pointer-events-none" />
 
             <div className="mt-8 mb-6 text-center relative z-10">
-                <div className="mx-auto w-20 h-20 bg-gradient-to-tr from-emerald-600 to-teal-400 rounded-3xl flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-6 group hover:scale-105 transition-transform">
-                    <Radar className="text-white w-10 h-10" />
+                <div className="mx-auto w-20 h-20 rounded-3xl border border-white/10 bg-white/5 flex items-center justify-center shadow-lg shadow-emerald-500/10 mb-6 group hover:scale-105 transition-transform overflow-hidden">
+                    <img src={socialRadarLogo} alt="SocialRadar logo" className="w-16 h-16 object-contain" />
                 </div>
                 <h1 className="text-2xl font-black tracking-tight mb-2">Upgrade to Pro</h1>
                 <p className="text-slate-400 text-sm">Unlock the full power of SocialRadar automation.</p>
@@ -140,7 +143,9 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
     const [password, setPassword] = useState("")
     const [rememberMe, setRememberMe] = useState(false)
     const [isLoading, setIsLoading] = useState(false)
+    const [isResettingPassword, setIsResettingPassword] = useState(false)
     const [errorMsg, setErrorMsg] = useState("")
+    const [successMsg, setSuccessMsg] = useState("")
 
     // Pre-fill email on load
     useEffect(() => {
@@ -154,6 +159,7 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
         e.preventDefault()
         setIsLoading(true)
         setErrorMsg("")
+        setSuccessMsg("")
 
         const { data, error } = await supabase.auth.signInWithPassword({
             email: email,
@@ -202,6 +208,32 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
         }
     }
 
+    const handleForgotPassword = async () => {
+        const normalizedEmail = email.trim()
+
+        if (!normalizedEmail) {
+            setErrorMsg("Enter your email first so we can send the recovery link.")
+            setSuccessMsg("")
+            return
+        }
+
+        setIsResettingPassword(true)
+        setErrorMsg("")
+        setSuccessMsg("")
+
+        const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+            redirectTo: PASSWORD_RESET_REDIRECT_URL
+        })
+
+        if (error) {
+            setErrorMsg(error.message)
+        } else {
+            setSuccessMsg("Recovery email sent. Check your inbox and spam folder.")
+        }
+
+        setIsResettingPassword(false)
+    }
+
     return (
         <div className="w-[380px] min-h-[500px] p-8 bg-slate-950 text-slate-50 flex flex-col font-sans relative overflow-hidden">
             {/* Background Effects */}
@@ -211,8 +243,8 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
             <UpdateBanner />
 
             <div className="mt-8 mb-12 text-center relative z-10">
-                <div className="mx-auto w-20 h-20 bg-gradient-to-tr from-emerald-600 to-teal-400 rounded-3xl flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-6 group hover:scale-105 transition-transform">
-                    <Radar className="text-white w-10 h-10" />
+                <div className="mx-auto w-20 h-20 rounded-3xl border border-white/10 bg-white/5 flex items-center justify-center shadow-lg shadow-emerald-500/10 mb-6 group hover:scale-105 transition-transform overflow-hidden">
+                    <img src={socialRadarLogo} alt="SocialRadar logo" className="w-16 h-16 object-contain" />
                 </div>
                 <h1 className="text-2xl font-black tracking-tight mb-2">Welcome Back</h1>
                 <p className="text-slate-400 text-sm">{errorMsg ? "Authentication Failed" : "Sign in to access your SocialRadar automation."}</p>
@@ -223,6 +255,13 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
                     <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center gap-3 text-rose-400 text-xs font-bold animate-in fade-in slide-in-from-top-1">
                         <AlertCircle className="w-4 h-4 shrink-0" />
                         {errorMsg}
+                    </div>
+                )}
+
+                {successMsg && (
+                    <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center gap-3 text-emerald-400 text-xs font-bold animate-in fade-in slide-in-from-top-1">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        {successMsg}
                     </div>
                 )}
 
@@ -247,6 +286,17 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
                         className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none transition-all placeholder:text-slate-600"
                         required
                     />
+                </div>
+
+                <div className="flex justify-end">
+                    <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        disabled={isResettingPassword || isLoading}
+                        className="text-xs font-semibold text-primary-400 hover:text-primary-300 disabled:text-slate-600 disabled:cursor-not-allowed transition-colors"
+                    >
+                        {isResettingPassword ? "Sending recovery email..." : "Forgot password?"}
+                    </button>
                 </div>
 
                 <div className="flex items-center gap-2 pl-1">
@@ -276,19 +326,61 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
             </form>
 
             <div className="mt-auto text-center relative z-10">
-                <p className="text-xs text-slate-500">
-                    Don't have an account? <span onClick={onGoToSignUp} className="text-primary-400 hover:text-primary-300 font-bold cursor-pointer">Sign Up Here</span>
-                </p>
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">Closed Beta</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                        Registration is currently invite-only. Request access at{" "}
+                        <a href={`mailto:${CLOSED_BETA_ACCESS_EMAIL}`} className="font-bold text-primary-400 hover:text-primary-300">
+                            {CLOSED_BETA_ACCESS_EMAIL}
+                        </a>
+                    </p>
+                </div>
             </div>
         </div>
     )
 }
 
 export function SignUpScreen({ onBack, onLogin }: { onBack: () => void, onLogin: (user: any, isPremium: boolean) => void }) {
+    void onLogin
     const [email, setEmail] = useState("")
     const [password, setPassword] = useState("")
     const [isLoading, setIsLoading] = useState(false)
     const [msg, setMsg] = useState({ type: "", text: "" })
+
+    return (
+        <div className="w-[380px] min-h-[500px] p-8 bg-slate-950 text-slate-50 flex flex-col font-sans relative overflow-hidden">
+            <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-64 h-64 bg-primary-600/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="mt-12 mb-8 text-center relative z-10">
+                <div className="mx-auto w-20 h-20 rounded-3xl border border-amber-500/20 bg-amber-500/10 flex items-center justify-center shadow-lg shadow-amber-500/10 mb-6">
+                    <Lock className="w-10 h-10 text-amber-300" />
+                </div>
+                <h1 className="text-2xl font-black tracking-tight mb-2">Closed Beta Access</h1>
+                <p className="text-slate-400 text-sm leading-relaxed">
+                    New registrations are temporarily closed while we onboard beta users in waves.
+                </p>
+            </div>
+
+            <div className="relative z-10 rounded-3xl border border-white/10 bg-slate-900/60 p-6">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">Need access?</p>
+                <p className="mt-3 text-sm text-slate-400">
+                    Email{" "}
+                    <a href={`mailto:${CLOSED_BETA_ACCESS_EMAIL}`} className="font-bold text-primary-400 hover:text-primary-300">
+                        {CLOSED_BETA_ACCESS_EMAIL}
+                    </a>{" "}
+                    and we can review your request for the private beta.
+                </p>
+            </div>
+
+            <button
+                onClick={onBack}
+                className="mt-auto text-xs text-slate-500 hover:text-white transition-colors"
+            >
+                ← Back to Login
+            </button>
+        </div>
+    )
 
     const handleSignUp = async (e: React.FormEvent) => {
         e.preventDefault()

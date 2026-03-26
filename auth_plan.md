@@ -1,4 +1,4 @@
-# Roadmap to Monetizable SaaS for IG Growth Auto Bot
+# Roadmap to Monetizable SaaS for SocialRadar
 
 ## 1. Architecture Shift: Client-Side -> SaaS
 Currently, your bot is a "Standalone Extension". To monetize it (subscriptions, licenses), you need to control who uses it.

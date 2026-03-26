@@ -1,6 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 import { Storage } from "@plasmohq/storage"
-import { storeCurrentUserProfile } from "../lib/instagramApi"
+import { extractBestAvatarUrl, storeCurrentUserProfile } from "../lib/instagramApi"
 
 export const config: PlasmoCSConfig = {
     matches: ["https://www.instagram.com/*"]
@@ -96,6 +96,23 @@ class InstagramBot {
             .trim()
     }
 
+    private extractHeaderAvatarUrl(header: Element | null): string {
+        const selectors = [
+            'header img[alt*="profile" i]',
+            'header canvas + img',
+            'header img[crossorigin="anonymous"]',
+            'header img'
+        ]
+
+        for (const selector of selectors) {
+            const src = (header?.querySelector(selector) as HTMLImageElement | null)?.src
+            const sanitized = this.sanitizeImageUrl(src || "")
+            if (sanitized) return sanitized
+        }
+
+        return ""
+    }
+
     private async syncActiveUsername() {
         // 1. Try to get from storage (trusted source from Dashboard/Previous Scrapes)
         const stats = await storage.get<any>("currentUserStats")
@@ -109,7 +126,7 @@ class InstagramBot {
         const newUsername = domUsername || stats?.username || "global"
 
         if (newUsername !== this.activeUsername) {
-            console.log(`GrowthBot: Context Change -> ${this.activeUsername} to ${newUsername}`)
+            console.log(`SocialRadar: Context Change -> ${this.activeUsername} to ${newUsername}`)
             this.activeUsername = newUsername
             return true
         }
@@ -246,7 +263,7 @@ class InstagramBot {
 
     async init() {
         try {
-            console.log("GrowthBot: Engine Started")
+            console.log("SocialRadar: Engine Started")
 
             // Listener para los datos interceptados por interceptor.ts
             window.addEventListener("message", (event) => {
@@ -326,7 +343,7 @@ class InstagramBot {
                 if (changes["currentUserStats"]) {
                     const stats = changes["currentUserStats"].newValue
                     if (stats?.username && stats.username !== this.activeUsername) {
-                        console.log(`GrowthBot: Account switch detected -> ${stats.username}`)
+                        console.log(`SocialRadar: Account switch detected -> ${stats.username}`)
                         this.activeUsername = stats.username
                         await this.syncDataForAccount()
                     }
@@ -366,7 +383,7 @@ class InstagramBot {
                 }
             })
         } catch (e) {
-            console.warn("GrowthBot: Listener error", e)
+            console.warn("SocialRadar: Listener error", e)
         }
     }
 
@@ -492,7 +509,7 @@ class InstagramBot {
             }
             this.logs = [newLog, ...this.logs].slice(0, 50)
             await storage.set(this.pKey("logs"), this.logs)
-            console.log(`[GrowthBot] ${msg}`)
+            console.log(`[SocialRadar] ${msg}`)
             await this.updateHealth({ lastAction: msg.slice(0, 120), lastActionAt: Date.now() })
             this.updateStatusUI() // Update UI when log adds
         } catch (e) { }
@@ -1327,7 +1344,7 @@ class InstagramBot {
                 baseStats = await storage.get<any>("currentUserStats") || {}
             }
             const existingStats: any = baseStats
-            const avatarUrl = this.sanitizeImageUrl(header?.querySelector('img')?.src || "")
+            const avatarUrl = this.extractHeaderAvatarUrl(header)
 
             const parseStatText = (item: Element) => {
                 const span = item.querySelector('span, a span, div span') || item;
@@ -1357,11 +1374,9 @@ class InstagramBot {
             // Use intercepted user data if available, otherwise fallback to DOM
             // If in DEEP mode, we PRESERVE existing metadata as per requirement
             const finalFullName = (mode === 'deep' && existingStats.fullName) ? existingStats.fullName : (interceptedUser?.full_name || interceptedUser?.fullName || domFullName || existingStats.fullName || username)
-            const finalAvatarUrl = this.sanitizeImageUrl(
-                (mode === 'deep' && existingStats.avatarUrl)
-                    ? existingStats.avatarUrl
-                    : (interceptedUser?.profile_pic_url || interceptedUser?.profilePicUrl || avatarUrl || existingStats.avatarUrl)
-            )
+            const finalAvatarUrl = (mode === 'deep' && existingStats.avatarUrl)
+                ? this.sanitizeImageUrl(existingStats.avatarUrl)
+                : extractBestAvatarUrl(interceptedUser, avatarUrl || existingStats.avatarUrl)
             const finalBio = (mode === 'deep' && existingStats.bio) ? existingStats.bio : (interceptedUser?.biography || interceptedUser?.bio || domBio || existingStats.bio || "")
             const finalIsVerified = (mode === 'deep' && existingStats.isVerified !== undefined) ? existingStats.isVerified : (interceptedUser?.is_verified ?? (header?.querySelector('svg[aria-label="Verified"]') ? true : (existingStats.isVerified ?? false)))
 
