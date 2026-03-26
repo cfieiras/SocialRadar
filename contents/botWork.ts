@@ -1,6 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 import { Storage } from "@plasmohq/storage"
-import { extractBestAvatarUrl, storeCurrentUserProfile } from "../lib/instagramApi"
+import { detectActiveUsername, extractBestAvatarUrl, storeCurrentUserProfile } from "../lib/instagramApi"
 
 export const config: PlasmoCSConfig = {
     matches: ["https://www.instagram.com/*"]
@@ -114,16 +114,17 @@ class InstagramBot {
     }
 
     private async syncActiveUsername() {
-        // 1. Try to get from storage (trusted source from Dashboard/Previous Scrapes)
         const stats = await storage.get<any>("currentUserStats")
+        const storedUsername = stats?.username || await storage.get<string>("lastKnownUsername") || this.activeUsername || "global"
+        let detectedUsername: string | null = null
 
-        // 2. Try to verify from DOM (Current actual logged in user)
-        // Instagram usually has the username in the profile link in the sidebar or header
-        const sidebarProfileLink = document.querySelector('a[href^="/"][href$="/"] img[alt*="profile"]')?.parentElement as HTMLAnchorElement
-        const domUsername = sidebarProfileLink?.getAttribute('href')?.replace(/\//g, '') ||
-            document.querySelector('header h2')?.textContent?.trim()
+        try {
+            detectedUsername = await detectActiveUsername()
+        } catch (error) {
+            console.warn("SocialRadar: active username detection failed", error)
+        }
 
-        const newUsername = domUsername || stats?.username || "global"
+        const newUsername = (detectedUsername || storedUsername || "global").toLowerCase()
 
         if (newUsername !== this.activeUsername) {
             console.log(`SocialRadar: Context Change -> ${this.activeUsername} to ${newUsername}`)
@@ -862,30 +863,42 @@ class InstagramBot {
                 }
             }
 
-            // Improved 'Following' button detection logic
-            const allButtons = Array.from(document.querySelectorAll('header button, main header button, div[role="button"]'))
+            const getVisibleProfileActionButtons = () => {
+                const selectors = [
+                    'header button',
+                    'main header button',
+                    'header div[role="button"]',
+                    'main header div[role="button"]',
+                    'section header button',
+                    'section header div[role="button"]'
+                ]
 
-            const interactionBtn = allButtons.find(b => {
-                const text = (b as HTMLElement).innerText?.toLowerCase() || ""
-                const label = b.getAttribute('aria-label')?.toLowerCase() || ""
-                const svgTitle = b.querySelector('title')?.textContent?.toLowerCase() || ""
+                return Array.from(document.querySelectorAll(selectors.join(', ')))
+                    .filter((el) => (el as HTMLElement).offsetHeight > 0) as HTMLElement[]
+            }
 
-                // Keywords that indicate we are following this user
-                const followingKeywords = ['following', 'siguiendo', 'requested', 'pendiente']
-                const isMessage = text.includes('message') || text.includes('mensaje') || text.includes('contact')
+            const getButtonSignals = (el: Element) => {
+                const node = el as HTMLElement
+                const text = node.innerText?.toLowerCase().trim() || ""
+                const label = node.getAttribute('aria-label')?.toLowerCase().trim() || ""
+                const title = node.querySelector('title')?.textContent?.toLowerCase().trim() || ""
+                return { text, label, title }
+            }
 
-                // Match by Text or Aria Label (using includes for safety against whitespace/icons)
-                const matchesText = followingKeywords.some(k => text.includes(k) || label.includes(k))
+            const followingKeywords = ['following', 'siguiendo', 'requested', 'pendiente']
+            const followKeywords = ['follow', 'seguir', 'follow back', 'seguir también', 'seguir tambien']
 
-                // Match by specific SVG icon (User with checkmark or arrow) usually present in "Following" button
-                // This is a robust fallback if text is hidden or changes
+            const interactionBtn = getVisibleProfileActionButtons().find((b) => {
+                const { text, label, title } = getButtonSignals(b)
+                const combined = `${text} ${label} ${title}`
+                const isMessage = combined.includes('message') || combined.includes('mensaje') || combined.includes('contact')
+                const matchesText = followingKeywords.some(k => combined.includes(k))
                 const hasFollowIcon = !!b.querySelector('svg[aria-label="Following"]') ||
                     !!b.querySelector('svg[aria-label="Siguiendo"]') ||
-                    // Specific paths often used for "Following" icon (User w/ chevrons)
                     Array.from(b.querySelectorAll('path')).some(p => p.getAttribute('d')?.includes('M12.003 20.003'))
 
-                return !isMessage && (matchesText || hasFollowIcon) && (b as HTMLElement).offsetHeight > 0
-            }) as HTMLElement
+                return !isMessage && (matchesText || hasFollowIcon)
+            })
 
             if (interactionBtn) {
                 interactionBtn.scrollIntoView({ block: 'center' })
@@ -893,20 +906,17 @@ class InstagramBot {
                 await this.nativeClick(interactionBtn)
 
                 let confirmed = false
-                // Wait for dialog
                 await this.sleep(1500)
 
-                // Logic to find the "Confirm Unfollow" button (usually red or distinct)
-                for (let i = 0; i < 5; i++) { // Increased retries
+                for (let i = 0; i < 6; i++) {
                     const dialog = document.querySelector('div[role="dialog"]')
                     if (dialog) {
-                        // Search for BUTTONS, DIVS or SPANS acting as buttons
                         const candidates = Array.from(dialog.querySelectorAll('button, div[role="button"], span[role="button"], span'))
-
                         const confirmBtn = candidates.find(el => {
-                            // Check for exact text match first
                             const t = el.textContent?.toLowerCase().trim() || ""
-                            return t === 'unfollow' || t === 'dejar de seguir'
+                            const aria = el.getAttribute('aria-label')?.toLowerCase().trim() || ""
+                            const combined = `${t} ${aria}`
+                            return combined.includes('unfollow') || combined.includes('dejar de seguir')
                         })
 
                         if (confirmBtn) {
@@ -918,52 +928,56 @@ class InstagramBot {
                     await this.sleep(800)
                 }
 
-                await this.sleep(3000)
+                await this.sleep(confirmed ? 3000 : 1800)
 
-                // VERIFICATION: Check if button changed to "Follow"
-                const checkBtn = Array.from(document.querySelectorAll('header button, main header button')).find(b => {
-                    const t = b.textContent?.toLowerCase() || ""
-                    return (t === 'follow' || t === 'seguir') && (b as HTMLElement).offsetHeight > 0
+                const checkBtn = getVisibleProfileActionButtons().find((b) => {
+                    const { text, label, title } = getButtonSignals(b)
+                    const combined = `${text} ${label} ${title}`
+                    return followKeywords.some(keyword => combined.includes(keyword))
                 })
 
                 if (checkBtn) {
                     this.stats.unfollows++
-                    this.sessionUnfollows++ // Increment session stats
-                    await storage.set("stats", this.stats)
-                    await storage.set("sessionUnfollows", this.sessionUnfollows)
+                    this.sessionUnfollows++
+                    await storage.set(this.pKey("stats"), this.stats)
+                    await storage.set(this.pKey("sessionUnfollows"), this.sessionUnfollows)
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
-                    await storage.set("followedUsers", this.followedUsers)
+                    await storage.set(this.pKey("followedUsers"), this.followedUsers)
                     this.addLog(`>>> SUCCESS: @${user} unfollowed.`, "success")
                     await this.randomSleep('unfollow')
                     return "DONE"
                 } else {
-                    this.addLog(`Failed to verify unfollow for @${user}. Retrying next time.`, "warning")
-                    // If failed, we don't remove from list yet, so it tries again later
+                    if (!confirmed) {
+                        this.addLog(`Unfollow confirmation dialog not detected for @${user}.`, "warning")
+                    } else {
+                        this.addLog(`Failed to verify unfollow for @${user}. Retrying next time.`, "warning")
+                    }
                     return "DONE"
                 }
             } else {
-                // If we can't find the 'Following' button, maybe we are not following them?
-                const isFollowBtn = document.querySelector('button')?.textContent?.toLowerCase() === 'follow'
+                const isFollowBtn = getVisibleProfileActionButtons().some((b) => {
+                    const { text, label, title } = getButtonSignals(b)
+                    const combined = `${text} ${label} ${title}`
+                    return followKeywords.some(keyword => combined.includes(keyword))
+                })
                 if (isFollowBtn) {
-                    // Already unfollowed
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
-                    await storage.set("followedUsers", this.followedUsers)
+                    await storage.set(this.pKey("followedUsers"), this.followedUsers)
                     this.addLog(`Already unfollowed @${user}. Removing from DB.`, "success")
                     return "DONE"
                 }
 
-                // SECURITY: If we can't find ANY button, assume we should skip to avoid loop
                 this.addLog(`Could not find Unfollow button for @${user}. Marking as failed to skip next time.`, "warning")
                 this.followedUsers = this.followedUsers.map(u =>
                     u.username.toLowerCase() === user ? { ...u, unfollowFailed: true } : u
                 )
-                await storage.set("followedUsers", this.followedUsers)
+                await storage.set(this.pKey("followedUsers"), this.followedUsers)
                 return "DONE"
             }
         }
 
         // Prospecting logic
-        const comps = await storage.get<string[]>("targetCompetitors") || []
+        const comps = await storage.get<string[]>(this.pKey("targetCompetitors")) || []
         const isCompetitor = comps.some(c => c.replace("@", "").toLowerCase() === user)
 
         if (isCompetitor) {
