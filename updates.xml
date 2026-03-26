@@ -5,6 +5,6 @@
     To find your ID: Install the extension from chrome://extensions -> Enable Developer Mode -> Look for ID
   -->
   <app appid='bcbilaplidopacahogjklopbmelfakio'>
-    <updatecheck codebase='https://github.com/cfieiras/SocialRadar/releases/latest/download/bcbilaplidopacahogjklopbmelfakio.crx' version='1.2.1' />
+    <updatecheck codebase='https://github.com/cfieiras/SocialRadar/releases/latest/download/bcbilaplidopacahogjklopbmelfakio.crx' version='1.2.2' />
   </app>
 </gupdate>
