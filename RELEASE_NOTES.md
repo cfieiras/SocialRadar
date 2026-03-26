@@ -1,3 +1,30 @@
+# SocialRadar - Version 1.2.2 (Closed Beta Stability Patch)
+Date: 2026-03-26
+
+## Milestone Summary
+This patch release focuses on closed beta readiness by improving automation stability, fixing competitor targeting behavior, and preparing shared audience data sync across devices.
+
+## Key Features
+
+### 1. Automation Reliability
+- **Unfollow Hardening**: Improved detection of profile action buttons, confirmation dialogs, and final state verification during unfollow runs.
+- **Real Account Context Detection**: The engine now distinguishes the logged-in Instagram account from visited target profiles, preventing false account-switch stops.
+- **Run-Loop Stability**: Reduced interruptions while browsing competitor profiles and follower lists during normal automation.
+
+### 2. Target Competitors Fix
+- **Account-Scoped Competitor Resolution**: Competitor targeting now consistently reads the active account's configured competitor list when the bot reaches a competitor profile.
+- **Follower Entry Flow Recovery**: The engine correctly continues from competitor profile into the followers list instead of treating the profile like a normal target.
+
+### 3. Closed Beta Product Updates
+- **Closed Beta Access Flow**: Registration remains locked to invited users and login messaging now routes beta access requests to the configured contact email.
+- **Beta Labelling**: Beta and Private Beta indicators were added across selected dashboard and popup surfaces to set expectations for in-progress features.
+
+### 4. Data Sync Foundations
+- **Audience Database Sync Prep**: Added the new shared `audience_database_entries` schema and extension-side sync hooks so Audience Database entries can be shared between devices.
+- **Historical Metrics Stability**: The extension now supports the stable daily snapshots model already deployed in Supabase.
+
+---
+
 # SocialRadar - Version 1.2.1 (Refresh Flow & Automation Expansion)
 Date: 2026-03-19
 
