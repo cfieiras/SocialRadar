@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import "../style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
+import helpDemoVideo from "url:~assets/help/SocialRadar_demo_landscape_es.mp4"
 import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
@@ -185,6 +186,7 @@ function Dashboard() {
     const [sessionUnfollows] = useStorage({ key: `${currentUsername}_sessionUnfollows`, instance: storage }, 0)
     const [showScoreModal, setShowScoreModal] = useState(false)
     const [showEngagementModal, setShowEngagementModal] = useState(false)
+    const [showHelpVideoModal, setShowHelpVideoModal] = useState(false)
 
     const [chartReady, setChartReady] = useState(false)
     const [showFeedbackModal, setShowFeedbackModal] = useState(false)
@@ -704,6 +706,46 @@ function Dashboard() {
 
     return (
         <div className="flex h-screen bg-slate-950 text-slate-50 font-sans overflow-hidden">
+            {showHelpVideoModal && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/85 px-3 py-4 backdrop-blur-md sm:px-5 sm:py-8">
+                    <div className="relative w-full max-w-3xl overflow-hidden rounded-[1.75rem] border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/40">
+                        <button
+                            onClick={() => setShowHelpVideoModal(false)}
+                            className="absolute right-5 top-5 z-10 rounded-2xl border border-white/10 bg-slate-950/80 p-3 text-slate-400 transition-colors hover:text-white"
+                            aria-label="Close help video">
+                            <X className="h-5 w-5" />
+                        </button>
+                        <div className="border-b border-white/10 bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.16),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.14),transparent_24%)] px-4 py-4 sm:px-6 sm:py-5">
+                            <div className="flex items-start justify-between gap-6">
+                                <div className="max-w-3xl">
+                                    <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.24em] text-cyan-300">
+                                        Help Video
+                                    </div>
+                                    <h3 className="text-xl font-black tracking-tight text-white sm:text-2xl">How SocialRadar Works</h3>
+                                    <p className="mt-3 text-xs leading-relaxed text-slate-400 sm:text-sm">
+                                        Watch the quick walkthrough for setup, launch flow, targeting sources, and the main dashboard controls.
+                                    </p>
+                                </div>
+                                <BetaBadge label="Quick Guide" className="shrink-0" />
+                            </div>
+                        </div>
+                        <div className="p-2 sm:p-4">
+                            <div className="overflow-hidden rounded-[1.1rem] border border-white/10 bg-black sm:rounded-[1.35rem]">
+                                <video
+                                    key={helpDemoVideo}
+                                    src={helpDemoVideo}
+                                    controls
+                                    autoPlay
+                                    muted
+                                    playsInline
+                                    preload="metadata"
+                                    className="aspect-video w-full bg-black"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {showDashboardGuide && (
                 <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 px-6 py-10 backdrop-blur-md">
                     <div className="relative w-full max-w-4xl overflow-hidden rounded-[2.5rem] border border-white/10 bg-slate-900/95 shadow-2xl shadow-black/40">
@@ -824,7 +866,20 @@ function Dashboard() {
                     ))}
                 </nav>
 
-                <div className="mt-auto pt-8 border-t border-slate-800/50">
+                <div className="mt-auto pt-8 border-t border-slate-800/50 space-y-4">
+                    <button
+                        onClick={() => setShowHelpVideoModal(true)}
+                        className="w-full flex items-center gap-3 rounded-2xl border border-slate-700 bg-slate-900 px-5 py-4 text-left text-slate-300 transition-all duration-300 hover:bg-slate-800 hover:text-white"
+                        title="Open help video"
+                    >
+                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-500/10 text-cyan-300">
+                            <Play className="w-4 h-4 fill-current" />
+                        </div>
+                        <div className="min-w-0">
+                            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-300">Help</p>
+                            <p className="text-sm font-bold tracking-tight text-white">Watch setup guide</p>
+                        </div>
+                    </button>
                     <div className={`p-6 rounded-3xl border relative overflow-hidden group transition-all duration-300 ${updateStatus.available ? "bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20 cursor-pointer" : "bg-gradient-to-br from-slate-900 to-slate-950 border-slate-800"}`} onClick={() => updateStatus.available && window.open(REPO_RELEASES_URL, "_blank")}>
                         {updateStatus.available && <div className="absolute inset-0 bg-emerald-500/5 animate-pulse" />}
                         <div className="relative z-10">
@@ -2679,5 +2734,6 @@ function Dashboard() {
 }
 
 export default Dashboard
+
 
 
