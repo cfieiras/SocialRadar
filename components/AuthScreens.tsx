@@ -139,6 +139,7 @@ export function SubscriptionScreen({ user, onCheckPayment, onLogout }: { user: a
 
 export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, isPremium: boolean) => void, onGoToSignUp: () => void }) {
     const [rememberedEmail, setRememberedEmail] = useStorage({ key: "rememberedEmail", instance: storage }, "")
+    const [riskDisclosureAccepted, setRiskDisclosureAccepted] = useStorage({ key: "riskDisclosureAccepted", instance: storage }, false)
     const [email, setEmail] = useState("")
     const [password, setPassword] = useState("")
     const [rememberMe, setRememberMe] = useState(false)
@@ -157,6 +158,11 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (!riskDisclosureAccepted) {
+            setErrorMsg("You must acknowledge the Instagram policy risk before signing in.")
+            setSuccessMsg("")
+            return
+        }
         setIsLoading(true)
         setErrorMsg("")
         setSuccessMsg("")
@@ -310,10 +316,25 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
                     <label htmlFor="remember" className="text-xs text-slate-400 font-medium cursor-pointer select-none">Remember my email</label>
                 </div>
 
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+                    <div className="flex items-start gap-3">
+                        <input
+                            type="checkbox"
+                            id="risk-disclosure"
+                            className="mt-0.5 h-4 w-4 rounded border-amber-500/30 bg-slate-900 text-amber-400 focus:ring-0 focus:ring-offset-0"
+                            checked={riskDisclosureAccepted}
+                            onChange={(e) => setRiskDisclosureAccepted(e.target.checked)}
+                        />
+                        <label htmlFor="risk-disclosure" className="text-xs font-medium leading-relaxed text-slate-300 cursor-pointer select-none">
+                            I understand that use of this application may contravene Instagram's Terms and Policies, and that this could result in limitations, temporary blocks, or suspension of my account.
+                        </label>
+                    </div>
+                </div>
+
                 <button
                     type="submit"
-                    disabled={isLoading}
-                    className={`w-full py-3.5 rounded-xl font-bold text-white shadow-lg shadow-primary-500/25 transition-all flex items-center justify-center gap-2 mt-4 ${isLoading ? "bg-slate-800 cursor-not-allowed" : "bg-gradient-to-r from-primary-600 to-primary-500 hover:shadow-primary-500/40 hover:-translate-y-0.5"}`}
+                    disabled={isLoading || !riskDisclosureAccepted}
+                    className={`w-full py-3.5 rounded-xl font-bold text-white shadow-lg shadow-primary-500/25 transition-all flex items-center justify-center gap-2 mt-4 ${(isLoading || !riskDisclosureAccepted) ? "bg-slate-800 cursor-not-allowed" : "bg-gradient-to-r from-primary-600 to-primary-500 hover:shadow-primary-500/40 hover:-translate-y-0.5"}`}
                 >
                     {isLoading ? (
                         <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -325,7 +346,7 @@ export function LoginScreen({ onLogin, onGoToSignUp }: { onLogin: (user: any, is
                 </button>
             </form>
 
-            <div className="mt-auto text-center relative z-10">
+            <div className="mt-6 text-center relative z-10">
                 <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">Closed Beta</p>
                     <p className="mt-1 text-xs text-slate-400">
