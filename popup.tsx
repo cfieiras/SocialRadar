@@ -103,19 +103,23 @@ function IndexPopup() {
 
       const { data: profile } = await supabase
         .from('profiles')
-        .select('is_premium')
+        .select('is_premium, beta_access')
         .eq('id', session.user.id)
         .single()
 
-      if (profile?.is_premium) {
-        // Confirmed premium
+      const hasAccess = profile
+        ? (profile.is_premium === true || profile.beta_access === true)
+        : true
+
+      if (hasAccess) {
+        // Confirmed access
         if (!session.isPremium) {
           setSession(prev => ({ ...prev, isPremium: true }))
         }
       } else {
-        // Not premium
+        // No access (only when a profile exists and explicitly has no access)
         if (session.isPremium) {
-          console.log("Subscription invalid or expired.")
+          console.log("Access invalid or expired.")
           setSession(prev => ({ ...prev, isPremium: false }))
         }
       }
@@ -177,18 +181,21 @@ function IndexPopup() {
     return <LoginScreen onLogin={(user, isPremium) => setSession({ isLoggedIn: true, user: user, isPremium: isPremium })} onGoToSignUp={() => setIsRegistering(true)} />
   }
 
-  // Subscription Gate: If logged in but NOT premium
+  // Access Gate: If logged in but without premium/beta access
   if (!session?.isPremium) {
     // We define a check function to pass down
     const verifyNow = async () => {
       if (!session?.user?.id) return
       const { data: profile } = await supabase
         .from('profiles')
-        .select('is_premium')
+        .select('is_premium, beta_access')
         .eq('id', session.user.id)
         .single()
 
-      if (profile?.is_premium) {
+      const hasAccess = profile
+        ? (profile.is_premium === true || profile.beta_access === true)
+        : true
+      if (hasAccess) {
         setSession(prev => ({ ...prev, isPremium: true }))
       } else {
         // Optional: Show a toast? For now just re-rendering same screen
