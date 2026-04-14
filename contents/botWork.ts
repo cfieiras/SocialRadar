@@ -1,6 +1,6 @@
-import type { PlasmoCSConfig } from "plasmo"
+﻿import type { PlasmoCSConfig } from "plasmo"
 import { Storage } from "@plasmohq/storage"
-import { detectActiveUsername, extractBestAvatarUrl, storeCurrentUserProfile } from "../lib/instagramApi"
+import { detectActiveUsername, extractBestAvatarUrl, fetchAudienceDatabaseFromSupabase, storeCurrentUserProfile, syncAudienceDatabaseToSupabase } from "../lib/instagramApi"
 
 export const config: PlasmoCSConfig = {
     matches: ["https://www.instagram.com/*"]
@@ -71,7 +71,8 @@ class InstagramBot {
             "targetHashtags", "targetCompetitors", "competitorsData",
             "lastSessionReport", "followerHistory", "sessionLikes",
             "sessionFollows", "sessionUnfollows", "processedHistory",
-            "targetPostUrls", "commentTemplates", "healthMetrics", "sessionComments"
+            "targetPostUrls", "commentTemplates", "healthMetrics", "sessionComments",
+            "sessionDayMarker"
         ]
         if (accountSpecific.includes(key)) {
             return `${this.activeUsername}_${key}`
@@ -142,6 +143,8 @@ class InstagramBot {
     private sessionUnfollows: number = 0
     private sessionComments: number = 0
     private capturedGraphQLData: any[] = []
+    private runLoopAccountUsername: string = "global"
+    private sessionDayMarker: string = ""
 
     private config: any = {
         likeEnabled: true,
@@ -179,6 +182,68 @@ class InstagramBot {
     }
 
     private isInternalStop = false
+
+    private resetTransientSessionState() {
+        this.currentMission = "Pending..."
+        this.currentSessionActions = 0
+        this.sessionLikes = 0
+        this.sessionFollows = 0
+        this.sessionUnfollows = 0
+        this.sessionComments = 0
+        this.sessionEngagedProfiles.clear()
+        this.capturedGraphQLData = []
+    }
+
+    private getSessionDayMarker() {
+        return new Date().toDateString()
+    }
+
+    private async resetDailySessionCounters(reason: string) {
+        const now = Date.now()
+        this.sessionStart = now
+        this.sessionDayMarker = this.getSessionDayMarker()
+        this.resetTransientSessionState()
+
+        await storage.set("botStartTime", now)
+        await storage.set(this.pKey("sessionLikes"), 0)
+        await storage.set(this.pKey("sessionFollows"), 0)
+        await storage.set(this.pKey("sessionUnfollows"), 0)
+        await storage.set(this.pKey("sessionComments"), 0)
+        await storage.set(this.pKey("sessionDayMarker"), this.sessionDayMarker)
+        await storage.remove(this.pKey("lastSessionReport"))
+
+        this.addLog(reason, "info")
+        this.updateStatusUI()
+    }
+
+    private async ensureDailySessionBoundary() {
+        const today = this.getSessionDayMarker()
+        if (!this.sessionDayMarker) {
+            this.sessionDayMarker = (await storage.get<string>(this.pKey("sessionDayMarker"))) || today
+        }
+        if (this.sessionDayMarker !== today) {
+            await this.resetDailySessionCounters("New day detected. Daily limits and session report reset.")
+        }
+    }
+
+    private async handleAccountSwitch(newUsername: string, reason = "Instagram account changed during session") {
+        const previousUsername = this.activeUsername
+        if (this.active && this.runLoopAccountUsername && previousUsername !== newUsername) {
+            await this.stopBot(reason)
+        }
+        this.activeUsername = newUsername
+        this.runLoopAccountUsername = newUsername
+        await this.syncDataForAccount()
+    }
+
+    private async verifyRunContext(): Promise<boolean> {
+        const contextChanged = await this.syncActiveUsername()
+        if (contextChanged && this.active && this.runLoopAccountUsername && this.activeUsername !== this.runLoopAccountUsername) {
+            await this.stopBot(`Instagram account changed: @${this.runLoopAccountUsername} -> @${this.activeUsername}`)
+            return false
+        }
+        return true
+    }
 
     private async stopBot(reason: string) {
         this.isInternalStop = true
@@ -276,7 +341,7 @@ class InstagramBot {
 
             await this.syncActiveUsername()
 
-            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments] = await Promise.all([
+            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments, savedSessionDayMarker] = await Promise.all([
                 storage.get(this.pKey("botConfig")),
                 storage.get(this.pKey("delays")),
                 storage.get<BotStats>(this.pKey("stats")),
@@ -291,7 +356,8 @@ class InstagramBot {
                 storage.get<number>(this.pKey("sessionLikes")),
                 storage.get<number>(this.pKey("sessionFollows")),
                 storage.get<number>(this.pKey("sessionUnfollows")),
-                storage.get<number>(this.pKey("sessionComments"))
+                storage.get<number>(this.pKey("sessionComments")),
+                storage.get<string>(this.pKey("sessionDayMarker"))
             ])
 
             if (savedConfig) this.config = savedConfig
@@ -299,18 +365,25 @@ class InstagramBot {
             if (savedStats) this.stats = { ...this.stats, ...savedStats }
             if (savedLogs) this.logs = savedLogs
             if (savedFollows) this.followedUsers = savedFollows
+            const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
+            if (remoteAudience.length > 0) {
+                this.followedUsers = remoteAudience
+                await storage.set(this.pKey("followedUsers"), remoteAudience)
+            }
             if (savedHistory) this.processedHistory = (savedHistory || []).map(h => h.toLowerCase())
-            if (savedStartTime) this.sessionStart = savedStartTime // Synced start time
-            if (sLikes) this.sessionLikes = sLikes
-            if (sFollows) this.sessionFollows = sFollows
-            if (sUnfollows) this.sessionUnfollows = sUnfollows
-            if (sComments) this.sessionComments = sComments
+            if (typeof savedStartTime === "number") this.sessionStart = savedStartTime // Synced start time
+            if (typeof sLikes === "number") this.sessionLikes = sLikes
+            if (typeof sFollows === "number") this.sessionFollows = sFollows
+            if (typeof sUnfollows === "number") this.sessionUnfollows = sUnfollows
+            if (typeof sComments === "number") this.sessionComments = sComments
+            this.sessionDayMarker = savedSessionDayMarker || this.getSessionDayMarker()
 
             // Initialize defaults if missing
             if (!savedHashtags) await storage.set(this.pKey("targetHashtags"), ["#digitalart"])
             if (!savedCompetitors) await storage.set(this.pKey("targetCompetitors"), ["@leomessi"])
             if (!savedPostUrls) await storage.set(this.pKey("targetPostUrls"), [])
             if (!savedCommentTemplates) await storage.set(this.pKey("commentTemplates"), this.getCommentTemplates())
+            await this.ensureDailySessionBoundary()
 
             this.listenToToggles()
 
@@ -320,7 +393,7 @@ class InstagramBot {
             const isAudit = params.get('audit') === 'true' || params.get('start_audit') === 'true'
             if (isAudit) {
                 this.showAuditOverlay()
-                this.addLog("⚡ Manual Audit Triggered. Intercepting Network...", "info")
+                this.addLog("âš¡ Manual Audit Triggered. Intercepting Network...", "info")
                 setTimeout(() => this.analyzeOwnProfile(), 2000)
             }
         } catch (e) { }
@@ -345,8 +418,7 @@ class InstagramBot {
                     const stats = changes["currentUserStats"].newValue
                     if (stats?.username && stats.username !== this.activeUsername) {
                         console.log(`SocialRadar: Account switch detected -> ${stats.username}`)
-                        this.activeUsername = stats.username
-                        await this.syncDataForAccount()
+                        await this.handleAccountSwitch(stats.username)
                     }
                 }
 
@@ -398,9 +470,16 @@ class InstagramBot {
         ])
         if (conf) this.config = conf
         if (del) this.delayConfig = del
-        if (savedStats) this.stats = { ...this.stats, ...savedStats }
-        if (savedLogs) this.logs = savedLogs
-        if (savedFollows) this.followedUsers = savedFollows
+        this.stats = savedStats ? { follows: 0, likes: 0, dms: 0, unfollows: 0, ...savedStats } : { follows: 0, likes: 0, dms: 0, unfollows: 0 }
+        this.logs = savedLogs || []
+        this.followedUsers = savedFollows || []
+        const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
+        if (remoteAudience.length > 0) {
+            this.followedUsers = remoteAudience
+            await storage.set(this.pKey("followedUsers"), remoteAudience)
+        }
+        this.processedHistory = await storage.get<string[]>(this.pKey("processedHistory")) || []
+        this.resetTransientSessionState()
 
         if (this.active) {
             this.removeStatusOverlay()
@@ -415,6 +494,7 @@ class InstagramBot {
         this.active = true
         this.addLog(">>> ENGINE LAUNCHED: Automation Online", "success")
         await this.syncActiveUsername()
+        this.runLoopAccountUsername = this.activeUsername
 
         await storage.remove(this.pKey("lastSessionReport"))
         await this.syncDataForAccount()
@@ -424,17 +504,14 @@ class InstagramBot {
         this.sessionStart = now
         await storage.set("botStartTime", now)
 
-        this.currentSessionActions = 0
-        this.sessionLikes = 0
-        this.sessionFollows = 0
-        this.sessionUnfollows = 0
-        this.sessionComments = 0
-        this.sessionEngagedProfiles.clear()
+        this.resetTransientSessionState()
+        this.sessionDayMarker = this.getSessionDayMarker()
 
         await storage.set(this.pKey("sessionLikes"), 0)
         await storage.set(this.pKey("sessionFollows"), 0)
         await storage.set(this.pKey("sessionUnfollows"), 0)
         await storage.set(this.pKey("sessionComments"), 0)
+        await storage.set(this.pKey("sessionDayMarker"), this.sessionDayMarker)
 
         this.removeStatusOverlay()
         if (this.config?.overlayEnabled !== false) {
@@ -452,6 +529,7 @@ class InstagramBot {
             await this.generateReport("Manual Stop by User")
         }
         this.isInternalStop = false
+        this.resetTransientSessionState()
         await storage.remove("botStartTime")
     }
 
@@ -475,6 +553,7 @@ class InstagramBot {
             }
             this.followedUsers = [entry, ...this.followedUsers].slice(0, 5000)
             await storage.set(this.pKey("followedUsers"), this.followedUsers)
+            void syncAudienceDatabaseToSupabase(this.activeUsername, this.followedUsers)
             this.addLog(`Capturing Audience: @${username}`, "info")
             await this.addToHistory(url)
             this.currentSessionActions++
@@ -484,23 +563,31 @@ class InstagramBot {
     // Check if we are on the login page
     private async checkSession(): Promise<boolean> {
         const url = window.location.href.toLowerCase()
-        // If we are explicitly on /accounts/login/
-        if (url.includes("/accounts/login")) return false
+        if (url.includes('/accounts/login') || url.includes('/challenge') || url.includes('/accounts/suspended')) return false
 
-        // Check for common login elements regardless of URL
         const passwordInput = document.querySelector('input[name="password"]')
         const loginButton = Array.from(document.querySelectorAll('button')).find(b =>
-            b.textContent?.toLowerCase().includes("log in") ||
-            b.textContent?.toLowerCase().includes("iniciar sesión")
+            b.textContent?.toLowerCase().includes('log in') ||
+            b.textContent?.toLowerCase().includes('iniciar sesión')
         )
         const usernameInput = document.querySelector('input[name="username"]')
+        const loginLink = Array.from(document.querySelectorAll('a')).find(a => {
+            const text = a.textContent?.toLowerCase() || ''
+            const href = (a as HTMLAnchorElement).href?.toLowerCase() || ''
+            return href.includes('/accounts/login') || text.includes('log in') || text.includes('iniciar sesión')
+        })
+        const challengeHeading = Array.from(document.querySelectorAll('h1, h2')).find(el => {
+            const text = el.textContent?.toLowerCase() || ''
+            return text.includes('confirm it was you') || text.includes('suspicious login') || text.includes('checkpoint')
+        })
 
-        // If we see a login form, we are likely logged out
         if (passwordInput && usernameInput) return false
+        if (loginButton && usernameInput) return false
+        if (loginLink && !document.querySelector('nav')) return false
+        if (challengeHeading) return false
 
         return true
     }
-
     async addLog(msg: string, type: LogEntry["type"] = "info") {
         try {
             const newLog: LogEntry = {
@@ -548,7 +635,7 @@ class InstagramBot {
     private getCommentTemplates(): string[] {
         return [
             "Great post, thanks for sharing!",
-            "Really solid content 👏",
+            "Really solid content ðŸ‘",
             "Love this perspective!",
             "Super useful. Keep it up!"
         ]
@@ -570,7 +657,10 @@ class InstagramBot {
         try {
             while (this.active) {
                 try {
+                    await this.ensureDailySessionBoundary()
                     await this.updateHealth({ lastHeartbeat: Date.now() })
+                    const contextStillValid = await this.verifyRunContext()
+                    if (!contextStillValid) return
                     const limit = this.delayConfig.batchLimit || 15
                 if (this.currentSessionActions >= limit) {
                     const restTime = this.delayConfig.batchPause || 3600
@@ -584,7 +674,7 @@ class InstagramBot {
 
                 // --- SLEEP MODE CHECK ---
                 if (this.isSleepTime()) {
-                    this.addLog("💤 Modo Dormir ACTIVADO. El bot descansará hasta que termine la ventana de sueño.", "wait")
+                    this.addLog("ðŸ’¤ Modo Dormir ACTIVADO. El bot descansarÃ¡ hasta que termine la ventana de sueÃ±o.", "wait")
                     this.removeStatusOverlay()
                     // Re-check every 15 minutes
                     await this.sleep(15 * 60 * 1000)
@@ -626,7 +716,7 @@ class InstagramBot {
                     if (!isProcessing) {
                         const myUsername = userStats?.username || await storage.get<string>("lastKnownUsername")
                         if (myUsername) {
-                            this.addLog("🛠 Priority Maintenance: Daily Deep Audit required...", "wait")
+                            this.addLog("ðŸ›  Priority Maintenance: Daily Deep Audit required...", "wait")
                             await storage.set("lastNavTime", Date.now())
                             window.location.href = `https://www.instagram.com/${myUsername}/?mode=deep`
                             return // Break loop to navigate
@@ -647,7 +737,7 @@ class InstagramBot {
                     const isFreshStart = (Date.now() - this.sessionStart) < 10000
 
                     if (lastChaos === 0 || (isFreshStart && isOverdue)) {
-                        this.addLog("⏳ Chaos timer reset to wait full cycle.", "wait")
+                        this.addLog("â³ Chaos timer reset to wait full cycle.", "wait")
                         lastChaos = Date.now()
                         await storage.set("lastChaosTime", lastChaos)
                     }
@@ -809,22 +899,30 @@ class InstagramBot {
 
         // If nothing was chosen, mission is complete. Check for continuous session mode
         if (this.config.continuousSession) {
-            this.addLog("🔄 Sesión Continua activada. Reiniciando ciclo...", "success")
+            this.addLog("ðŸ”„ SesiÃ³n Continua activada. Reiniciando ciclo...", "success")
 
             // Show summary before continuing
-            const summary = `✅ Ciclo completado:\n🔥 Likes: ${this.sessionLikes}\n👥 Follows: ${this.sessionFollows}\n👋 Unfollows: ${this.sessionUnfollows}\n💬 Comments: ${this.sessionComments}\n\n🔄 Reiniciando sesión automáticamente...`
+            const summary = `âœ… Ciclo completado:\nðŸ”¥ Likes: ${this.sessionLikes}\nðŸ‘¥ Follows: ${this.sessionFollows}\nðŸ‘‹ Unfollows: ${this.sessionUnfollows}\nðŸ’¬ Comments: ${this.sessionComments}\n\nðŸ”„ Reiniciando sesiÃ³n automÃ¡ticamente...`
             this.addLog(summary.replace(/\n/g, " | "), "success")
 
             // Reset session counters for the new cycle
             this.currentSessionActions = 0
             this.sessionLikes = 0
             this.sessionFollows = 0
+            this.sessionUnfollows = 0
             this.sessionComments = 0
             this.sessionEngagedProfiles.clear()
             this.sessionStart = Date.now()
+            this.sessionDayMarker = this.getSessionDayMarker()
 
             // Save reset stats to storage
             await storage.set("botStartTime", Date.now())
+            await storage.set(this.pKey("sessionLikes"), 0)
+            await storage.set(this.pKey("sessionFollows"), 0)
+            await storage.set(this.pKey("sessionUnfollows"), 0)
+            await storage.set(this.pKey("sessionComments"), 0)
+            await storage.set(this.pKey("sessionDayMarker"), this.sessionDayMarker)
+            await storage.remove(this.pKey("lastSessionReport"))
 
             // Wait a moment before continuing
             await this.sleep(5000)
@@ -938,11 +1036,12 @@ class InstagramBot {
 
                 if (checkBtn) {
                     this.stats.unfollows++
-                    this.sessionUnfollows++
+                    this.sessionUnfollows++ // Increment session stats
                     await storage.set(this.pKey("stats"), this.stats)
                     await storage.set(this.pKey("sessionUnfollows"), this.sessionUnfollows)
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
                     await storage.set(this.pKey("followedUsers"), this.followedUsers)
+                    void syncAudienceDatabaseToSupabase(this.activeUsername, this.followedUsers)
                     this.addLog(`>>> SUCCESS: @${user} unfollowed.`, "success")
                     await this.randomSleep('unfollow')
                     return "DONE"
@@ -963,6 +1062,7 @@ class InstagramBot {
                 if (isFollowBtn) {
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
                     await storage.set(this.pKey("followedUsers"), this.followedUsers)
+                    void syncAudienceDatabaseToSupabase(this.activeUsername, this.followedUsers)
                     this.addLog(`Already unfollowed @${user}. Removing from DB.`, "success")
                     return "DONE"
                 }
@@ -972,6 +1072,7 @@ class InstagramBot {
                     u.username.toLowerCase() === user ? { ...u, unfollowFailed: true } : u
                 )
                 await storage.set(this.pKey("followedUsers"), this.followedUsers)
+                void syncAudienceDatabaseToSupabase(this.activeUsername, this.followedUsers)
                 return "DONE"
             }
         }
@@ -1197,7 +1298,7 @@ class InstagramBot {
     }
 
     async executeChaosRoutine() {
-        this.addLog("⚡ ENTERING HUMANIZATION MODE: Chaotic Behavior Active", "warning")
+        this.addLog("âš¡ ENTERING HUMANIZATION MODE: Chaotic Behavior Active", "warning")
 
         // 1. Ensure we are on Feed
         if (!window.location.pathname.match(/^\/$/)) {
@@ -1214,7 +1315,7 @@ class InstagramBot {
             const isRun = await storage.get<boolean>("isRunning")
             if (!isRun) {
                 this.active = false
-                this.addLog("🛑 Bot stopped manually during Chaos Mode.", "warning")
+                this.addLog("ðŸ›‘ Bot stopped manually during Chaos Mode.", "warning")
                 return // Exit immediately, DO NOT reload
             }
 
@@ -1234,12 +1335,12 @@ class InstagramBot {
 
         // Only reload if we finished naturally (time expired) and weren't stopped
         if (this.active) {
-            this.addLog("⚡ HUMANIZATION COMPLETE: Resuming operations.", "success")
+            this.addLog("âš¡ HUMANIZATION COMPLETE: Resuming operations.", "success")
             window.location.reload()
         }
     }
 
-    // --- NUEVO SISTEMA DE AUDITORÍA PROFESIONAL ---
+    // --- NUEVO SISTEMA DE AUDITORÃA PROFESIONAL ---
     private async analyzeOwnProfile() {
         try {
             const params = new URLSearchParams(window.location.search)
@@ -1257,9 +1358,9 @@ class InstagramBot {
                 this.showAuditOverlay()
             }
 
-            this.addLog(`🔍 Audit Mode (${mode.toUpperCase()}): Intercepting Metadata...`, "info")
+            this.addLog(`ðŸ” Audit Mode (${mode.toUpperCase()}): Intercepting Metadata...`, "info")
 
-            // RESET: Limpiamos los datos capturados anteriormente para que solo cuenten los de esta auditoría
+            // RESET: Limpiamos los datos capturados anteriormente para que solo cuenten los de esta auditorÃ­a
             this.capturedGraphQLData = []
 
             // 1. Trigger Network requests (Skip scroll if QUICK)
@@ -1288,7 +1389,7 @@ class InstagramBot {
             }
 
             // El interceptor ahora guarda los posts procesados en cada mensaje, 
-            // recolectamos los únicos de todas las capturas
+            // recolectamos los Ãºnicos de todas las capturas
             const uniquePosts = new Map()
             let interceptedUser = null
 
@@ -1365,13 +1466,13 @@ class InstagramBot {
                 const title = span?.getAttribute('title');
                 if (title) return title.replace(/[,.]/g, '');
 
-                // Extraer el texto crudo y limpiar cualquier cosa que no sea número o abreviatura
+                // Extraer el texto crudo y limpiar cualquier cosa que no sea nÃºmero o abreviatura
                 const rawText = span?.textContent?.trim() || item.textContent?.trim() || "0";
 
-                // Si el texto es puramente un número (ej: "1234"), devolverlo
+                // Si el texto es puramente un nÃºmero (ej: "1234"), devolverlo
                 if (/^\d+$/.test(rawText.replace(/[,.]/g, ''))) return rawText.replace(/[,.]/g, '');
 
-                // Busca números seguidos opcionalmente de K o M (ej: 1,234, 1.5M, 500K)
+                // Busca nÃºmeros seguidos opcionalmente de K o M (ej: 1,234, 1.5M, 500K)
                 const match = rawText.match(/[\d,.]+[KkMm]?/);
                 return match ? match[0] : "0";
             }
@@ -1419,7 +1520,7 @@ class InstagramBot {
             const followersCurrent = interceptedFollowers ? interceptedFollowers.toString() : (scavengedFollowers !== "0" ? scavengedFollowers : (statsItems[1] ? parseStatText(statsItems[1]) : "0"))
             const followingCurrent = interceptedFollowing ? interceptedFollowing.toString() : (scavengedFollowing !== "0" ? scavengedFollowing : (statsItems[2] ? parseStatText(statsItems[2]) : "0"))
 
-            this.addLog(`📊 Data Results: Posts=${totalPostsCurrent}, Followers=${followersCurrent}`, "success")
+            this.addLog(`ðŸ“Š Data Results: Posts=${totalPostsCurrent}, Followers=${followersCurrent}`, "success")
 
             const profileData = {
                 ...existingStats,
@@ -1513,7 +1614,7 @@ class InstagramBot {
                 })
             }
 
-            this.addLog(`✅ Audit Complete: ${latestPosts.length} posts. ER: ${engagementRate.toFixed(2)}%`, "success")
+            this.addLog(`âœ… Audit Complete: ${latestPosts.length} posts. ER: ${engagementRate.toFixed(2)}%`, "success")
 
             if (new URLSearchParams(window.location.search).get('audit') === 'true' || new URLSearchParams(window.location.search).get('start_audit') === 'true') {
                 // Send to Supabase via Background
@@ -1530,7 +1631,7 @@ class InstagramBot {
 
                     if (isStartAudit) {
                         // If this was a start_audit, we now start the bot officially (if enabled)
-                        this.addLog("✅ Routine Audit Complete. Starting sequence...", "success")
+                        this.addLog("âœ… Routine Audit Complete. Starting sequence...", "success")
                         // Clean URL and go to home to start loop
                         window.location.href = "https://www.instagram.com/?variant=audit_complete"
                     } else {
@@ -1741,9 +1842,9 @@ class InstagramBot {
                 <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 24px;">
                     <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
                 </svg>
-                <h1 style="font-size: 24px; font-weight: 900; letter-spacing: 0.1em; margin-bottom: 16px; color: #38bdf8;">ANÁLISIS EN PROGRESO</h1>
+                <h1 style="font-size: 24px; font-weight: 900; letter-spacing: 0.1em; margin-bottom: 16px; color: #38bdf8;">ANÃLISIS EN PROGRESO</h1>
                 <p style="font-size: 14px; font-weight: 500; color: #94a3b8; max-width: 400px; line-height: 1.6;">
-                    Estamos recopilando métricas y analizando tu perfil.
+                    Estamos recopilando mÃ©tricas y analizando tu perfil.
                     <br/>
                     <strong style="color: #f43f5e; display: block; margin-top: 12px;">POR FAVOR NO TOQUES NADA</strong>
                 </p>
@@ -1897,3 +1998,5 @@ class InstagramBot {
 }
 
 new InstagramBot()
+
+

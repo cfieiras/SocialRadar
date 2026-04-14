@@ -1,3 +1,25 @@
+# SocialRadar - Version 1.2.3 (Daily Session Reset Fix)
+Date: 2026-04-14
+
+## Milestone Summary
+This patch fixes a critical automation continuity issue where session limits (likes/follows/unfollows/comments) could remain locked across day changes, leaving the bot with no executable tasks on the next day.
+
+## Key Fixes
+
+### 1. Daily Limit Boundary Reset
+- Added an account-scoped day marker (`sessionDayMarker`) to detect day changes reliably.
+- Bot loop now enforces a daily boundary check and resets session counters automatically when a new day starts.
+- Reset now clears stale `lastSessionReport` so the dashboard reflects the new active day correctly.
+
+### 2. Continuous Session Counter Consistency
+- Fixed a bug where `sessionUnfollows` was not reset in continuous mode while other counters were reset.
+- Continuous mode now persists a full reset of all session counters (`likes`, `follows`, `unfollows`, `comments`) to storage.
+
+### 3. Runtime Recovery Behavior
+- Day transition now also resets `botStartTime` and transient mission/session state, preventing "limit reached" deadlocks after midnight.
+
+---
+
 # SocialRadar - Version 1.2.2 (Closed Beta Stability Patch)
 Date: 2026-03-26
 
