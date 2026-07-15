@@ -148,7 +148,8 @@ function Dashboard() {
     const [activeTab, setActiveTab] = useState("overview")
 
     const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
-    const currentUsername = userStats?.username || "global"
+    const [lastKnownUsername] = useStorage({ key: "lastKnownUsername", instance: storage }, "")
+    const currentUsername = userStats?.username || lastKnownUsername || "global"
     const competitorsDataKey = `${currentUsername}_competitorsData`
 
     const [termsAccepted] = useStorage<boolean>({ key: "termsAccepted", instance: storage })
@@ -159,6 +160,7 @@ function Dashboard() {
     const [hashtags, setHashtags] = useStorage({ key: `${currentUsername}_targetHashtags`, instance: storage }, ["#digitalart"])
     const [competitors, setCompetitors] = useStorage({ key: `${currentUsername}_targetCompetitors`, instance: storage }, ["@leomessi"])
     const [targetPosts, setTargetPosts] = useStorage({ key: `${currentUsername}_targetPostUrls`, instance: storage }, [] as string[])
+    const [postInteractions, setPostInteractions] = useStorage({ key: `${currentUsername}_postInteractions`, instance: storage }, { likers: true, commenters: false })
     const [commentTemplates, setCommentTemplates] = useStorage({ key: `${currentUsername}_commentTemplates`, instance: storage }, [
         "Great post, thanks for sharing!",
         "Really solid content 👏",
@@ -947,9 +949,42 @@ function Dashboard() {
                                         }
                                     }
 
+                                    const actualUser = currentUsername !== "global" ? currentUsername : (lastKnownUsername || "global")
                                     await storage.set("sessionLikes", 0)
                                     await storage.set("sessionFollows", 0)
                                     await storage.set("sessionUnfollows", 0)
+                                    await storage.set(`${actualUser}_postTargetQueue`, [])
+
+                                    // Auto-save pending post URL if user forgot to press Enter
+                                    let currentTargetUrl = newPostUrl.trim()
+                                    if (currentTargetUrl && (currentTargetUrl.includes('/p/') || currentTargetUrl.includes('/reels/') || currentTargetUrl.includes('/reel/'))) {
+                                        if (!currentTargetUrl.startsWith('http')) currentTargetUrl = 'https://' + currentTargetUrl
+                                        const currentPosts = targetPosts || []
+                                        if (!currentPosts.includes(currentTargetUrl)) {
+                                            const updatedPosts = [...currentPosts, currentTargetUrl]
+                                            setTargetPosts(updatedPosts)
+                                            await storage.set(`${currentUsername}_targetPostUrls`, updatedPosts)
+                                            await storage.set("global_targetPostUrls", updatedPosts)
+                                        }
+                                        setNewPostUrl("")
+                                    }
+                                    
+                                    // Remove 'post:' entries from ALL processedHistory to guarantee re-scraping
+                                    const allData = await chrome.storage.local.get(null)
+                                    for (const key of Object.keys(allData)) {
+                                        if (key.endsWith("_processedHistory")) {
+                                            let history = allData[key]
+                                            try {
+                                                if (typeof history === 'string') history = JSON.parse(history)
+                                            } catch(e){}
+                                            
+                                            if (Array.isArray(history)) {
+                                                const cleaned = history.filter(h => typeof h === 'string' && !h.startsWith('post:'))
+                                                await chrome.storage.local.set({ [key]: JSON.stringify(cleaned) })
+                                            }
+                                        }
+                                    }
+                                    
                                     window.open(targetUrl, "_blank")
                                 }
                                 setIsRunning(nextState)
@@ -1856,6 +1891,30 @@ function Dashboard() {
                                                 onKeyDown={addTargetPost}
                                             />
                                             <p className="text-xs text-slate-500 mt-3">When enabled, bot can start missions directly from these posts.</p>
+                                            
+                                            <div className="mt-6 space-y-3 border-t border-slate-800 pt-6">
+                                                <h4 className="text-sm font-bold text-slate-300">Interact With:</h4>
+                                                <div className="flex gap-4">
+                                                    <label className="flex items-center gap-3 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={postInteractions.likers}
+                                                            onChange={(e) => setPostInteractions({ ...postInteractions, likers: e.target.checked })}
+                                                            className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-rose-500 focus:ring-rose-500 focus:ring-offset-slate-950"
+                                                        />
+                                                        <span className="text-sm font-medium text-slate-400">Likers</span>
+                                                    </label>
+                                                    <label className="flex items-center gap-3 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={postInteractions.commenters}
+                                                            onChange={(e) => setPostInteractions({ ...postInteractions, commenters: e.target.checked })}
+                                                            className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-rose-500 focus:ring-rose-500 focus:ring-offset-slate-950"
+                                                        />
+                                                        <span className="text-sm font-medium text-slate-400">Commenters</span>
+                                                    </label>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 )}

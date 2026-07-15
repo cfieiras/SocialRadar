@@ -1,4 +1,4 @@
-﻿import type { PlasmoCSConfig } from "plasmo"
+import type { PlasmoCSConfig } from "plasmo"
 import { Storage } from "@plasmohq/storage"
 import { detectActiveUsername, extractBestAvatarUrl, fetchAudienceDatabaseFromSupabase, storeCurrentUserProfile, syncAudienceDatabaseToSupabase } from "../lib/instagramApi"
 
@@ -145,6 +145,9 @@ class InstagramBot {
     private capturedGraphQLData: any[] = []
     private runLoopAccountUsername: string = "global"
     private sessionDayMarker: string = ""
+    private postTargetQueue: string[] = []
+    private postInteractions: any = { likers: true, commenters: false }
+    private expectingLikersModal: boolean = false
 
     private config: any = {
         likeEnabled: true,
@@ -341,7 +344,7 @@ class InstagramBot {
 
             await this.syncActiveUsername()
 
-            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments, savedSessionDayMarker] = await Promise.all([
+            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments, savedSessionDayMarker, savedPostInteractions, savedPostTargetQueue] = await Promise.all([
                 storage.get(this.pKey("botConfig")),
                 storage.get(this.pKey("delays")),
                 storage.get<BotStats>(this.pKey("stats")),
@@ -357,7 +360,9 @@ class InstagramBot {
                 storage.get<number>(this.pKey("sessionFollows")),
                 storage.get<number>(this.pKey("sessionUnfollows")),
                 storage.get<number>(this.pKey("sessionComments")),
-                storage.get<string>(this.pKey("sessionDayMarker"))
+                storage.get<string>(this.pKey("sessionDayMarker")),
+                storage.get<any>(this.pKey("postInteractions")),
+                storage.get<string[]>(this.pKey("postTargetQueue"))
             ])
 
             if (savedConfig) this.config = savedConfig
@@ -377,6 +382,8 @@ class InstagramBot {
             if (typeof sUnfollows === "number") this.sessionUnfollows = sUnfollows
             if (typeof sComments === "number") this.sessionComments = sComments
             this.sessionDayMarker = savedSessionDayMarker || this.getSessionDayMarker()
+            if (savedPostInteractions) this.postInteractions = savedPostInteractions
+            if (savedPostTargetQueue) this.postTargetQueue = savedPostTargetQueue
 
             // Initialize defaults if missing
             if (!savedHashtags) await storage.set(this.pKey("targetHashtags"), ["#digitalart"])
@@ -461,18 +468,22 @@ class InstagramBot {
     }
 
     private async syncDataForAccount() {
-        const [conf, del, savedStats, savedLogs, savedFollows] = await Promise.all([
+        const [conf, del, savedStats, savedLogs, savedFollows, savedPI, savedPTQ] = await Promise.all([
             storage.get<any>(this.pKey("botConfig")),
             storage.get<any>(this.pKey("delays")),
             storage.get<BotStats>(this.pKey("stats")),
             storage.get<LogEntry[]>(this.pKey("logs")),
-            storage.get<FollowedUser[]>(this.pKey("followedUsers"))
+            storage.get<FollowedUser[]>(this.pKey("followedUsers")),
+            storage.get<any>(this.pKey("postInteractions")),
+            storage.get<string[]>(this.pKey("postTargetQueue"))
         ])
         if (conf) this.config = conf
         if (del) this.delayConfig = del
         this.stats = savedStats ? { follows: 0, likes: 0, dms: 0, unfollows: 0, ...savedStats } : { follows: 0, likes: 0, dms: 0, unfollows: 0 }
         this.logs = savedLogs || []
         this.followedUsers = savedFollows || []
+        if (savedPI) this.postInteractions = savedPI
+        if (savedPTQ) this.postTargetQueue = savedPTQ
         const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
         if (remoteAudience.length > 0) {
             this.followedUsers = remoteAudience
@@ -701,6 +712,13 @@ class InstagramBot {
                     continue
                 }
 
+                if (document.body.textContent?.includes("Sorry, this page isn't available.") || document.body.textContent?.includes("Esta página no está disponible.")) {
+                    this.addLog("Page not available (404). Skipping...", "warning")
+                    await storage.set("lastNavTime", 0)
+                    await this.navigateToNextTarget()
+                    continue
+                }
+
                 // --- 0. PRIORITY MAINTENANCE CHECK (Once per day) ---
                 // We check this BEFORE any modal or other logic to ensure data freshness on startup
                 const userStats = await storage.get<any>("currentUserStats")
@@ -762,14 +780,62 @@ class InstagramBot {
                     if (modalHeader.includes("Followers") || modalHeader.includes("Seguidores")) {
                         await this.handleFollowersModal(dialog as HTMLElement)
                         continue // Skip grid sleep to speed up
+                    } else if (this.expectingLikersModal || modalHeader.includes("Likes") || modalHeader.includes("Me gusta")) {
+                        this.expectingLikersModal = false
+                        await this.handleLikersModal(dialog as HTMLElement)
+                        continue
                     } else if (path.includes("/p/") || path.includes("/reels/") || dialog.querySelector('article')) {
-                        // It is a Post Modal (or post page with dialog wrapper)
-                        await this.handlePostInteraction()
+                        let postUrls: string[] = []
+                        const allStorage = await chrome.storage.local.get(null)
+                        for (const k of Object.keys(allStorage)) {
+                            if (k.endsWith("targetPostUrls")) {
+                                try {
+                                    let val = allStorage[k]
+                                    if (typeof val === 'string') val = JSON.parse(val)
+                                    if (Array.isArray(val) && val.length > 0) {
+                                        postUrls = [...postUrls, ...val]
+                                    }
+                                } catch(e) {}
+                            }
+                        }
+                        const currentId = window.location.href.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
+                        const isTarget = currentId && postUrls.some((u: string) => u.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase() === currentId)
+                        
+                        if (this.config.sourcePosts && isTarget) {
+                            await this.handleSpecificPostTargeting(dialog as HTMLElement)
+                        } else {
+                            await this.handlePostInteraction()
+                        }
                         continue // Interaction handles its own sleep
                     }
                 }
+                else if (path.includes("/liked_by/")) {
+                    this.expectingLikersModal = false
+                    await this.handleLikersModal(document.body)
+                    continue
+                }
                 else if (path.includes("/p/") || path.includes("/reels/")) {
-                    await this.handlePostInteraction()
+                    let postUrls: string[] = []
+                    const allStorage = await chrome.storage.local.get(null)
+                    for (const k of Object.keys(allStorage)) {
+                        if (k.endsWith("targetPostUrls")) {
+                            try {
+                                let val = allStorage[k]
+                                if (typeof val === 'string') val = JSON.parse(val)
+                                if (Array.isArray(val) && val.length > 0) {
+                                    postUrls = [...postUrls, ...val]
+                                }
+                            } catch(e) {}
+                        }
+                    }
+                    const currentId = window.location.href.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
+                    const isTarget = currentId && postUrls.some((u: string) => u.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase() === currentId)
+                    
+                    if (this.config.sourcePosts && isTarget) {
+                        await this.handleSpecificPostTargeting()
+                    } else {
+                        await this.handlePostInteraction()
+                    }
                     continue
                 }
                 else if (path.includes("/explore/tags/") || path.includes("/explore/search/")) {
@@ -813,6 +879,18 @@ class InstagramBot {
     }
 
     async navigateToNextTarget() {
+        if (this.postTargetQueue && this.postTargetQueue.length > 0) {
+            const targetUsername = this.postTargetQueue.shift()
+            await storage.set(this.pKey("postTargetQueue"), this.postTargetQueue)
+            if (targetUsername) {
+                this.currentMission = `@${targetUsername} (Target)`
+                this.addLog(`>>> Mission: Specific Target @${targetUsername}`, "success")
+                await storage.set("lastNavTime", Date.now())
+                window.location.href = `https://www.instagram.com/${targetUsername}/?hl=en`
+                return
+            }
+        }
+
         const sources = []
         if (this.config.sourceHashtags) sources.push('hashtag')
         if (this.config.sourceCompetitors) sources.push('competitor')
@@ -861,17 +939,44 @@ class InstagramBot {
                     return
                 }
             } else if (choice === 'post') {
-                const postUrls = await storage.get<string[]>(this.pKey("targetPostUrls")) || []
-                const clean = postUrls.map((u) => (u || "").trim()).filter(Boolean)
+                let postUrls: string[] = []
+                const allStorage = await chrome.storage.local.get(null)
+                for (const k of Object.keys(allStorage)) {
+                    if (k.endsWith("targetPostUrls")) {
+                        try {
+                            let val = allStorage[k]
+                            if (typeof val === 'string') val = JSON.parse(val)
+                            if (Array.isArray(val) && val.length > 0) {
+                                postUrls = [...postUrls, ...val]
+                            }
+                        } catch(e) {}
+                    }
+                }
+                
+                const clean = postUrls.map((u) => (u || "").trim()).filter(u => {
+                    if (!u) return false
+                    const uid = u.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
+                    return uid && !this.processedHistory.includes(`post:${uid}`)
+                })
+                
+                this.addLog(`DEBUG POSTS: postUrls=${postUrls.length}, clean=${clean.length}, history=${this.processedHistory.length}`, "info")
+                
                 if (clean.length === 0) {
-                    this.addLog("Source 'Posts' enabled but list is empty.", "warning")
+                    this.addLog("Source 'Posts' enabled but all targets are processed or empty. Clearing queue.", "warning")
+                    this.postTargetQueue = []
+                    await storage.set(this.pKey("postTargetQueue"), [])
                     continue
                 }
                 const picked = clean[Math.floor(Math.random() * clean.length)]
                 this.currentMission = `Post Target`
                 this.addLog(`>>> Mission: Post URL`, "success")
                 await storage.set("lastNavTime", Date.now())
-                window.location.href = picked
+                
+                if (window.location.href.split('?')[0] === picked.split('?')[0]) {
+                    window.location.href = "https://www.instagram.com/"
+                } else {
+                    window.location.href = picked
+                }
                 return
             } else if (choice === 'unfollow') {
                 const now = Date.now()
@@ -1093,10 +1198,17 @@ class InstagramBot {
 
             if (sessionDone) {
                 window.history.back(); await this.sleep(4000)
-            } else if (inHistory) {
+            } else {
+                if (!inHistory) {
+                    await this.addToHistory(cleanUrl)
+                }
+                
+                this.sessionEngagedProfiles.add(cleanUrl)
+                
                 const post = document.querySelector('article a[href*="/p/"], main a[href*="/p/"]')
-                if (post) { (post as HTMLElement).click(); await this.sleep(4000) }
-                else {
+                if (post) { 
+                    (post as HTMLElement).click(); await this.sleep(4000) 
+                } else {
                     if (this.config.followEnabled) {
                         const btn = Array.from(document.querySelectorAll('header button, main header button')).find(b => {
                             const t = b.textContent?.toLowerCase() || ""
@@ -1109,7 +1221,6 @@ class InstagramBot {
                             await this.saveFollowedTarget(user, cleanUrl)
                         }
                     }
-                    this.sessionEngagedProfiles.add(cleanUrl)
                     window.history.back(); await this.sleep(4000)
                 }
             }
@@ -1286,6 +1397,179 @@ class InstagramBot {
                 window.location.href = "https://www.instagram.com/?variant=force_home"
             }
         }
+    }
+
+    private async closePostModal() {
+        const closeSelectors = [
+            'svg[aria-label="Close"]', 'svg[aria-label="Cerrar"]',
+            'svg[aria-label="Back"]', 'svg[aria-label="Volver"]',
+            'div[role="dialog"] ._abl-'
+        ]
+
+        let closeBtn = null
+        for (const s of closeSelectors) {
+            const el = document.querySelector(s)
+            if (el) {
+                closeBtn = el.closest('button') || el.closest('div[role="button"]')
+                if (closeBtn) break
+            }
+        }
+
+        if (closeBtn) {
+            (closeBtn as HTMLElement).click();
+        } else {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))
+        }
+
+        await this.sleep(1500)
+
+        if (window.location.pathname.includes('/p/') || window.location.pathname.includes('/reels/')) {
+            window.history.back()
+            await this.sleep(2500)
+        }
+    }
+
+    async handleSpecificPostTargeting(dialog?: HTMLElement) {
+        this.addLog(">>> Strategy: Specific Post Targeting", "info")
+        await this.sleep(4000) // Give comments time to load
+
+        const postContainer = dialog || document.body
+        
+        if (this.postInteractions.commenters) {
+            this.addLog("Extracting Commenters from Post...", "info")
+            const commenters = new Set<string>()
+            
+            const allLinks = Array.from(postContainer.querySelectorAll('a'))
+            
+            // Identify post owner to exclude them
+            const ownerLink = postContainer.querySelector('header a') || allLinks[0]
+            const ownerPath = ownerLink ? (ownerLink as HTMLAnchorElement).pathname || '' : ''
+            const ownerUsername = ownerPath.split('?')[0].replace(/\//g, '')
+            this.addLog(`DEBUG: Owner identified as: ${ownerUsername}`, "info")
+            
+            const ignoreList = ['explore', 'reels', 'stories', 'direct', 'saved', 'settings', 'your_activity', 'qr', 'p', 'about', 'help']
+            
+            let possibleUsers = []
+            for (const profileLink of allLinks) {
+                const path = profileLink.pathname
+                if (!path || path === '/') continue
+                if (path.includes('/p/') || path.includes('/reels/') || path.includes('/explore/') || path.includes('/liked_by/')) continue;
+                
+                const cleanHref = path.split('?')[0]
+                const username = cleanHref.replace(/\//g, '')
+                possibleUsers.push(username)
+                
+                if (username && username !== this.runLoopAccountUsername && username !== ownerUsername && !commenters.has(username)) {
+                    if (!ignoreList.includes(username) && username.length > 2) {
+                        commenters.add(username)
+                    }
+                }
+            }
+            this.addLog(`DEBUG: Possible usernames: ${possibleUsers.slice(0, 5).join(', ')}...`, "info")
+            
+            if (commenters.size > 0) {
+                const newTargets = Array.from(commenters)
+                this.addLog(`Found ${newTargets.length} commenters.`, "success")
+                this.postTargetQueue = [...this.postTargetQueue, ...newTargets]
+                await storage.set(this.pKey("postTargetQueue"), this.postTargetQueue)
+            } else {
+                this.addLog("No commenters found. They might be hidden or not loaded.", "warning")
+            }
+        }
+        
+        if (this.postInteractions.likers) {
+            this.addLog("Extracting Likers from Post...", "info")
+            const likesLink = Array.from(postContainer.querySelectorAll('a, span[role="button"], div[role="button"]')).find(el => {
+                const href = el.getAttribute('href') || ''
+                const text = el.textContent?.toLowerCase().trim() || ''
+                
+                if (href.includes('/liked_by/') || text.includes('likes') || text.includes('me gusta') || text.includes('others') || text.includes('otros')) {
+                    return true
+                }
+                
+                // Catch the exact case provided by user: <span role="button">216</span>
+                if (el.tagName === 'SPAN' && el.getAttribute('role') === 'button' && /^[0-9,.]+$/.test(text)) {
+                    return true
+                }
+                
+                return false
+            })
+            
+            if (likesLink) {
+                (likesLink as HTMLElement).click()
+                this.addLog("Opened Likers modal. Waiting to parse...", "wait")
+                this.expectingLikersModal = true
+                await this.sleep(3000)
+                return
+            } else {
+                this.addLog("Could not find Likers button.", "warning")
+            }
+        }
+        
+        if (!this.postInteractions.likers && !this.postInteractions.commenters) {
+            this.addLog("No post interactions configured. Skipping.", "warning")
+        }
+        
+        const currentId = window.location.href.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
+        if (currentId) this.processedHistory.push(`post:${currentId}`)
+        
+        await storage.set("lastNavTime", 0)
+        await this.navigateToNextTarget()
+    }
+
+    async handleLikersModal(dialog: HTMLElement) {
+        this.addLog("Parsing Likers Modal...", "info")
+        await this.sleep(2000)
+        
+        let lastHeight = 0
+        let scrolls = 0
+        
+        let scrollContainer = dialog.querySelector('div[style*="overflow"]') || dialog.querySelector('div[class*="overflow-y"]')
+        if (!scrollContainer) {
+            const divs = Array.from(dialog.querySelectorAll('div'))
+            scrollContainer = divs.find(d => {
+                const style = window.getComputedStyle(d)
+                return style.overflowY === 'auto' || style.overflowY === 'scroll'
+            }) || dialog
+        }
+        
+        while (scrolls < 3) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight
+            await this.sleep(1500)
+            if (scrollContainer.scrollHeight === lastHeight) break
+            lastHeight = scrollContainer.scrollHeight
+            scrolls++
+        }
+        
+        const likers = new Set<string>()
+        const links = dialog.querySelectorAll('a[href^="/"]')
+        const ignoreList = ['explore', 'reels', 'stories', 'direct', 'saved', 'settings', 'your_activity', 'qr', 'p', 'about', 'help', 'liked_by']
+        
+        for (const link of Array.from(links)) {
+            const href = link.getAttribute('href') || ''
+            if (href.includes('/p/') || href.includes('/reels/') || href.includes('/explore/') || href.includes('/liked_by/')) continue;
+            
+            const cleanHref = href.split('?')[0]
+            const username = cleanHref.replace(/\//g, '')
+            if (username && username !== this.runLoopAccountUsername && !ignoreList.includes(username) && username.length > 2) {
+                likers.add(username)
+            }
+        }
+        
+        if (likers.size > 0) {
+            const newTargets = Array.from(likers)
+            this.addLog(`Found ${newTargets.length} likers.`, "success")
+            this.postTargetQueue = [...this.postTargetQueue, ...newTargets]
+            await storage.set(this.pKey("postTargetQueue"), this.postTargetQueue)
+        } else {
+            this.addLog("No likers found.", "warning")
+        }
+        
+        const currentId = window.location.href.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
+        if (currentId) this.processedHistory.push(`post:${currentId}`)
+        
+        await storage.set("lastNavTime", 0)
+        await this.navigateToNextTarget()
     }
 
     private async nativeClick(el: HTMLElement) {

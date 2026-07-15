@@ -1,4 +1,4 @@
-import { Storage } from "@plasmohq/storage"
+﻿import { Storage } from "@plasmohq/storage"
 import { supabase } from "./supabaseClient"
 
 const storage = new Storage({
@@ -8,6 +8,7 @@ const storage = new Storage({
 const accountKey = (username: string, key: string) => `${username}_${key}`
 const STABLE_HISTORY_TABLE = "account_daily_snapshots"
 const LEGACY_HISTORY_TABLE = "follower_history"
+const AUDIENCE_DATABASE_TABLE = "audience_database_entries"
 
 type DailySnapshotRow = {
     snapshot_date?: string
@@ -79,6 +80,15 @@ export interface Unfollower {
     detected_at: string
 }
 
+export interface AudienceDatabaseEntry {
+    username: string
+    url: string
+    timestamp: number
+    dateStr: string
+    protected?: boolean
+    unfollowFailed?: boolean
+}
+
 interface CriticalErrorPayload {
     area: string
     error: unknown
@@ -124,6 +134,119 @@ export async function reportCriticalError(payload: CriticalErrorPayload) {
         }
     } catch (telemetryError) {
         console.warn("Telemetry: reporting pipeline failed", telemetryError)
+    }
+}
+
+function normalizeAudienceDatabaseEntries(entries: AudienceDatabaseEntry[] = []): AudienceDatabaseEntry[] {
+    const byUsername = new Map<string, AudienceDatabaseEntry>()
+
+    for (const rawEntry of entries) {
+        const username = String(rawEntry?.username || "").trim().replace(/^@/, "")
+        if (!username) continue
+
+        const normalizedUsername = username.toLowerCase()
+        const timestamp = Number(rawEntry?.timestamp || Date.now())
+        const existing = byUsername.get(normalizedUsername)
+
+        if (existing && (existing.timestamp || 0) >= timestamp) continue
+
+        byUsername.set(normalizedUsername, {
+            username,
+            url: sanitizeImageUrl(String(rawEntry?.url || "").split('?')[0].replace(/\/$/, "").toLowerCase()),
+            timestamp,
+            dateStr: rawEntry?.dateStr || new Date(timestamp).toLocaleDateString(),
+            protected: !!rawEntry?.protected,
+            unfollowFailed: !!rawEntry?.unfollowFailed
+        })
+    }
+
+    return Array.from(byUsername.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+}
+
+export async function fetchAudienceDatabaseFromSupabase(instagramUsername?: string): Promise<AudienceDatabaseEntry[]> {
+    if (!instagramUsername) return []
+
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.user?.id) return []
+
+        const { data, error } = await supabase
+            .from(AUDIENCE_DATABASE_TABLE)
+            .select('target_username, target_url, captured_at, captured_date_str, is_protected, unfollow_failed')
+            .eq('user_id', session.user.id)
+            .eq('instagram_username', instagramUsername)
+            .order('captured_at', { ascending: false })
+
+        if (error) {
+            console.warn("Audience DB: failed to fetch from Supabase", error.message || error)
+            return []
+        }
+
+        return normalizeAudienceDatabaseEntries((data || []).map((row: any) => ({
+            username: row.target_username,
+            url: row.target_url,
+            timestamp: row.captured_at ? new Date(row.captured_at).getTime() : Date.now(),
+            dateStr: row.captured_date_str || "",
+            protected: !!row.is_protected,
+            unfollowFailed: !!row.unfollow_failed
+        })))
+    } catch (error) {
+        console.warn("Audience DB: fetch pipeline failed", error)
+        return []
+    }
+}
+
+export async function syncAudienceDatabaseToSupabase(instagramUsername: string, entries: AudienceDatabaseEntry[] = []): Promise<boolean> {
+    if (!instagramUsername) return false
+
+    const normalizedEntries = normalizeAudienceDatabaseEntries(entries)
+    await storage.set(accountKey(instagramUsername, "followedUsers"), normalizedEntries)
+
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.user?.id) return false
+
+        const { error: deleteError } = await supabase
+            .from(AUDIENCE_DATABASE_TABLE)
+            .delete()
+            .eq('user_id', session.user.id)
+            .eq('instagram_username', instagramUsername)
+
+        if (deleteError) {
+            console.warn("Audience DB: failed to clear previous rows", deleteError.message || deleteError)
+            return false
+        }
+
+        if (normalizedEntries.length === 0) return true
+
+        const payload = normalizedEntries.map((entry) => ({
+            user_id: session.user.id,
+            instagram_username: instagramUsername,
+            target_username: entry.username.toLowerCase(),
+            target_url: entry.url,
+            captured_at: new Date(entry.timestamp || Date.now()).toISOString(),
+            captured_date_str: entry.dateStr,
+            is_protected: !!entry.protected,
+            unfollow_failed: !!entry.unfollowFailed
+        }))
+
+        const batchSize = 200
+        for (let i = 0; i < payload.length; i += batchSize) {
+            const chunk = payload.slice(i, i + batchSize)
+            const { error: insertError } = await supabase
+                .from(AUDIENCE_DATABASE_TABLE)
+                .insert(chunk)
+
+            if (insertError) {
+                console.warn("Audience DB: failed to insert rows", insertError.message || insertError)
+                return false
+            }
+        }
+
+        return true
+    } catch (error) {
+        console.warn("Audience DB: sync pipeline failed", error)
+        return false
     }
 }
 
@@ -575,7 +698,7 @@ export async function syncStatsToSupabase(profile: InstagramProfile) {
 
         if (!error) {
             await storage.set("lastSupabaseSync", today)
-            console.log(`IG API: Synced daily metrics to Supabase (${storageMode}) ✅`)
+            console.log(`IG API: Synced daily metrics to Supabase (${storageMode}) âœ…`)
         } else {
             console.error("IG API: Supabase sync error:", error.message || JSON.stringify(error))
             await reportCriticalError({
