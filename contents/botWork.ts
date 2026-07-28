@@ -1447,7 +1447,10 @@ class InstagramBot {
             const sessionDone = this.sessionEngagedProfiles.has(cleanUrl)
 
             if (sessionDone) {
-                window.history.back(); await this.sleep(4000)
+                this.addLog(`Profile @${user} already processed in this session. Navigating to next target...`, "info")
+                await storage.set("lastNavTime", 0)
+                await this.navigateToNextTarget()
+                return "DONE"
             } else {
                 if (!inHistory) {
                     await this.addToHistory(cleanUrl)
@@ -1471,7 +1474,10 @@ class InstagramBot {
                             await this.saveFollowedTarget(user, cleanUrl)
                         }
                     }
-                    window.history.back(); await this.sleep(4000)
+                    this.addLog(`Finished profile @${user}. Navigating to next target...`, "info")
+                    await storage.set("lastNavTime", 0)
+                    await this.navigateToNextTarget()
+                    return "DONE"
                 }
             }
         }
@@ -1637,8 +1643,9 @@ class InstagramBot {
 
         // Safety fallback: Force Exit if stuck
         if (window.location.pathname.includes('/p/') || window.location.pathname.includes('/reels/')) {
-            this.addLog("Post didn't close normally. Retrying exit...", "warning")
-            window.history.back()
+            this.addLog("Post didn't close normally. Navigating to next target...", "warning")
+            await storage.set("lastNavTime", 0)
+            await this.navigateToNextTarget()
             await this.sleep(2500)
 
             // Double check - if STILL stuck, force home to break the loop
@@ -1674,7 +1681,8 @@ class InstagramBot {
         await this.sleep(1500)
 
         if (window.location.pathname.includes('/p/') || window.location.pathname.includes('/reels/')) {
-            window.history.back()
+            await storage.set("lastNavTime", 0)
+            await this.navigateToNextTarget()
             await this.sleep(2500)
         }
     }
