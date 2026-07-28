@@ -582,26 +582,10 @@ class InstagramBot {
             if (savedPostInteractions) this.postInteractions = savedPostInteractions
             if (savedPostTargetQueue) this.postTargetQueue = savedPostTargetQueue
 
-            // Initialize defaults with global fallbacks if missing or empty
-            if (!savedConfig) {
-                const globConfig = await storage.get("global_botConfig")
-                if (globConfig) {
-                    this.config = globConfig
-                    await storage.set(this.pKey("botConfig"), globConfig)
-                }
-            }
-            if (!savedHashtags || savedHashtags.length === 0) {
-                const globTags = await storage.get<string[]>("global_targetHashtags") || ["#digitalart"]
-                await storage.set(this.pKey("targetHashtags"), globTags)
-            }
-            if (!savedCompetitors || savedCompetitors.length === 0) {
-                const globComps = await storage.get<string[]>("global_targetCompetitors") || ["@leomessi"]
-                await storage.set(this.pKey("targetCompetitors"), globComps)
-            }
-            if (!savedPostUrls || savedPostUrls.length === 0) {
-                const globPosts = await storage.get<string[]>("global_targetPostUrls") || []
-                await storage.set(this.pKey("targetPostUrls"), globPosts)
-            }
+            // Initialize per-account defaults if missing
+            if (!savedHashtags || savedHashtags.length === 0) await storage.set(this.pKey("targetHashtags"), ["#digitalart"])
+            if (!savedCompetitors || savedCompetitors.length === 0) await storage.set(this.pKey("targetCompetitors"), ["@leomessi"])
+            if (!savedPostUrls) await storage.set(this.pKey("targetPostUrls"), [])
             if (!savedCommentTemplates) await storage.set(this.pKey("commentTemplates"), this.getCommentTemplates())
             await this.ensureDailySessionBoundary()
 
@@ -718,38 +702,16 @@ class InstagramBot {
     }
 
     private async syncDataForAccount() {
-        const [conf, del, savedStats, savedLogs, savedFollows, savedPI, savedPTQ, savedHashtags, savedCompetitors, savedPostUrls] = await Promise.all([
+        const [conf, del, savedStats, savedLogs, savedFollows, savedPI, savedPTQ] = await Promise.all([
             storage.get<any>(this.pKey("botConfig")),
             storage.get<any>(this.pKey("delays")),
             storage.get<BotStats>(this.pKey("stats")),
             storage.get<LogEntry[]>(this.pKey("logs")),
             storage.get<FollowedUser[]>(this.pKey("followedUsers")),
             storage.get<any>(this.pKey("postInteractions")),
-            storage.get<string[]>(this.pKey("postTargetQueue")),
-            storage.get<string[]>(this.pKey("targetHashtags")),
-            storage.get<string[]>(this.pKey("targetCompetitors")),
-            storage.get<string[]>(this.pKey("targetPostUrls"))
+            storage.get<string[]>(this.pKey("postTargetQueue"))
         ])
-        if (conf) {
-            this.config = conf
-        } else {
-            const globConfig = await storage.get("global_botConfig")
-            if (globConfig) this.config = globConfig
-        }
-
-        if (!savedHashtags || savedHashtags.length === 0) {
-            const globTags = await storage.get<string[]>("global_targetHashtags")
-            if (globTags && globTags.length > 0) await storage.set(this.pKey("targetHashtags"), globTags)
-        }
-        if (!savedCompetitors || savedCompetitors.length === 0) {
-            const globComps = await storage.get<string[]>("global_targetCompetitors")
-            if (globComps && globComps.length > 0) await storage.set(this.pKey("targetCompetitors"), globComps)
-        }
-        if (!savedPostUrls || savedPostUrls.length === 0) {
-            const globPosts = await storage.get<string[]>("global_targetPostUrls")
-            if (globPosts && globPosts.length > 0) await storage.set(this.pKey("targetPostUrls"), globPosts)
-        }
-
+        if (conf) this.config = conf
         if (del) this.delayConfig = del
         this.stats = savedStats ? { follows: 0, likes: 0, dms: 0, unfollows: 0, ...savedStats } : { follows: 0, likes: 0, dms: 0, unfollows: 0 }
         this.logs = savedLogs || []
@@ -1096,19 +1058,7 @@ class InstagramBot {
                         await this.handleLikersModal(dialog as HTMLElement)
                         continue
                     } else if (path.includes("/p/") || path.includes("/reels/") || dialog.querySelector('article')) {
-                        let postUrls: string[] = []
-                        const allStorage = await chrome.storage.local.get(null)
-                        for (const k of Object.keys(allStorage)) {
-                            if (k.endsWith("targetPostUrls")) {
-                                try {
-                                    let val = allStorage[k]
-                                    if (typeof val === 'string') val = JSON.parse(val)
-                                    if (Array.isArray(val) && val.length > 0) {
-                                        postUrls = [...postUrls, ...val]
-                                    }
-                                } catch(e) {}
-                            }
-                        }
+                        const postUrls: string[] = await storage.get<string[]>(this.pKey("targetPostUrls")) || []
                         const currentId = window.location.href.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
                         const isTarget = currentId && postUrls.some((u: string) => u.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase() === currentId)
                         
@@ -1126,19 +1076,7 @@ class InstagramBot {
                     continue
                 }
                 else if (path.includes("/p/") || path.includes("/reels/")) {
-                    let postUrls: string[] = []
-                    const allStorage = await chrome.storage.local.get(null)
-                    for (const k of Object.keys(allStorage)) {
-                        if (k.endsWith("targetPostUrls")) {
-                            try {
-                                let val = allStorage[k]
-                                if (typeof val === 'string') val = JSON.parse(val)
-                                if (Array.isArray(val) && val.length > 0) {
-                                    postUrls = [...postUrls, ...val]
-                                }
-                            } catch(e) {}
-                        }
-                    }
+                    const postUrls: string[] = await storage.get<string[]>(this.pKey("targetPostUrls")) || []
                     const currentId = window.location.href.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
                     const isTarget = currentId && postUrls.some((u: string) => u.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase() === currentId)
                     
@@ -1263,19 +1201,7 @@ class InstagramBot {
                     return
                 }
             } else if (choice === 'post') {
-                let postUrls: string[] = []
-                const allStorage = await chrome.storage.local.get(null)
-                for (const k of Object.keys(allStorage)) {
-                    if (k.endsWith("targetPostUrls")) {
-                        try {
-                            let val = allStorage[k]
-                            if (typeof val === 'string') val = JSON.parse(val)
-                            if (Array.isArray(val) && val.length > 0) {
-                                postUrls = [...postUrls, ...val]
-                            }
-                        } catch(e) {}
-                    }
-                }
+                const postUrls: string[] = await storage.get<string[]>(this.pKey("targetPostUrls")) || []
                 
                 const clean = postUrls.map((u) => (u || "").trim()).filter(u => {
                     if (!u) return false

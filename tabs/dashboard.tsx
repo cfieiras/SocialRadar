@@ -149,7 +149,22 @@ function Dashboard() {
 
     const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
     const [lastKnownUsername] = useStorage({ key: "lastKnownUsername", instance: storage }, "")
-    const currentUsername = userStats?.username || lastKnownUsername || "global"
+    const activeDetectedUser = (userStats?.username || lastKnownUsername || "").toLowerCase()
+    
+    // Multi-Account Rotation State
+    const [multiAccounts, setMultiAccounts] = useStorage({ key: "multiAccounts", instance: storage }, [] as { username: string, password: string }[])
+    const [multiAccountEnabled, setMultiAccountEnabled] = useStorage({ key: "multiAccountEnabled", instance: storage }, false)
+    const [newMultiUsername, setNewMultiUsername] = useState("")
+    const [newMultiPassword, setNewMultiPassword] = useState("")
+
+    // Account Selector for per-account strategy management
+    const [selectedProfileUsername, setSelectedProfileUsername] = useState<string>("")
+    const availableAccounts = Array.from(new Set([
+        activeDetectedUser,
+        ...(multiAccounts || []).map(a => a.username.toLowerCase())
+    ])).filter(Boolean)
+
+    const currentUsername = (selectedProfileUsername || activeDetectedUser || (availableAccounts.length > 0 ? availableAccounts[0] : "global")).toLowerCase()
     const competitorsDataKey = `${currentUsername}_competitorsData`
 
     const [termsAccepted] = useStorage<boolean>({ key: "termsAccepted", instance: storage })
@@ -201,17 +216,10 @@ function Dashboard() {
     const [dashboardGuideSeen, setDashboardGuideSeen] = useStorage({ key: "dashboardGuideSeen", instance: storage }, false)
     const [showDashboardGuide, setShowDashboardGuide] = useState(false)
 
-    // Multi-Account Rotation State
-    const [multiAccounts, setMultiAccounts] = useStorage({ key: "multiAccounts", instance: storage }, [] as { username: string, password: string }[])
-    const [multiAccountEnabled, setMultiAccountEnabled] = useStorage({ key: "multiAccountEnabled", instance: storage }, false)
-    const [newMultiUsername, setNewMultiUsername] = useState("")
-    const [newMultiPassword, setNewMultiPassword] = useState("")
-
     useEffect(() => {
         if (lastSeenVersion !== undefined && lastSeenVersion !== "" && lastSeenVersion !== currentVersion) {
             setShowReleaseNotes(true)
         } else if (lastSeenVersion === "") {
-            // First time or fresh install - mark as seen but dont show notes (they saw onboarding)
             setLastSeenVersion(currentVersion)
         }
     }, [lastSeenVersion, currentVersion])
@@ -226,58 +234,6 @@ function Dashboard() {
         const timer = setTimeout(() => setChartReady(true), 1000)
         return () => clearTimeout(timer)
     }, [])
-
-    // Sync per-account strategy & sources with global fallbacks so posts & settings persist across restarts & account switches
-    useEffect(() => {
-        const syncGlobalFallbacks = async () => {
-            if (!currentUsername) return
-
-            try {
-                // 1. Target Posts
-                const accPosts = await storage.get<string[]>(`${currentUsername}_targetPostUrls`)
-                const globPosts = await storage.get<string[]>("global_targetPostUrls")
-                if ((!accPosts || accPosts.length === 0) && globPosts && globPosts.length > 0) {
-                    setTargetPosts(globPosts)
-                    await storage.set(`${currentUsername}_targetPostUrls`, globPosts)
-                } else if (accPosts && accPosts.length > 0) {
-                    await storage.set("global_targetPostUrls", accPosts)
-                }
-
-                // 2. Target Hashtags
-                const accTags = await storage.get<string[]>(`${currentUsername}_targetHashtags`)
-                const globTags = await storage.get<string[]>("global_targetHashtags")
-                if ((!accTags || accTags.length === 0) && globTags && globTags.length > 0) {
-                    setHashtags(globTags)
-                    await storage.set(`${currentUsername}_targetHashtags`, globTags)
-                } else if (accTags && accTags.length > 0) {
-                    await storage.set("global_targetHashtags", accTags)
-                }
-
-                // 3. Target Competitors
-                const accComps = await storage.get<string[]>(`${currentUsername}_targetCompetitors`)
-                const globComps = await storage.get<string[]>("global_targetCompetitors")
-                if ((!accComps || accComps.length === 0) && globComps && globComps.length > 0) {
-                    setCompetitors(globComps)
-                    await storage.set(`${currentUsername}_targetCompetitors`, globComps)
-                } else if (accComps && accComps.length > 0) {
-                    await storage.set("global_targetCompetitors", accComps)
-                }
-
-                // 4. Bot Config
-                const accConf = await storage.get(`${currentUsername}_botConfig`)
-                const globConf = await storage.get("global_botConfig")
-                if (!accConf && globConf) {
-                    setConfig(globConf)
-                    await storage.set(`${currentUsername}_botConfig`, globConf)
-                } else if (accConf) {
-                    await storage.set("global_botConfig", accConf)
-                }
-            } catch (err) {
-                console.warn("Dashboard: Storage sync error", err)
-            }
-        }
-        syncGlobalFallbacks()
-    }, [currentUsername])
 
     const lastProcessedTs = useRef(0)
     /* 
@@ -499,13 +455,10 @@ function Dashboard() {
         await setDashboardGuideSeen(true)
     }
 
-    const addTag = async (e: React.KeyboardEvent) => {
+    const addTag = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && newTag.trim()) {
             const formatted = newTag.startsWith("#") ? newTag : `#${newTag}`
-            const updated = [...(hashtags || []), formatted]
-            setHashtags(updated)
-            await storage.set(`${currentUsername}_targetHashtags`, updated)
-            await storage.set("global_targetHashtags", updated)
+            setHashtags([...(hashtags || []), formatted])
             setNewTag("")
         }
     }
@@ -521,10 +474,7 @@ function Dashboard() {
             const username = fixed.replace('@', '')
 
             if (!competitors.includes(fixed)) {
-                const updated = [...(competitors || []), fixed]
-                setCompetitors(updated)
-                await storage.set(`${currentUsername}_targetCompetitors`, updated)
-                await storage.set("global_targetCompetitors", updated)
+                setCompetitors([...(competitors || []), fixed])
                 setNewCompetitor("")
 
                 // Background fetch for the new competitor
@@ -582,7 +532,7 @@ function Dashboard() {
         }
     }
 
-    const addTargetPost = async (e: React.KeyboardEvent) => {
+    const addTargetPost = (e: React.KeyboardEvent) => {
         if (e.key !== "Enter") return
         const raw = newPostUrl.trim()
         if (!raw) return
@@ -592,10 +542,7 @@ function Dashboard() {
             return
         }
         if (!targetPosts.includes(normalized)) {
-            const updated = [normalized, ...(targetPosts || [])].slice(0, 100)
-            setTargetPosts(updated)
-            await storage.set(`${currentUsername}_targetPostUrls`, updated)
-            await storage.set("global_targetPostUrls", updated)
+            setTargetPosts([normalized, ...(targetPosts || [])].slice(0, 100))
         }
         setNewPostUrl("")
     }
@@ -1034,7 +981,6 @@ function Dashboard() {
                                             const updatedPosts = [...currentPosts, currentTargetUrl]
                                             setTargetPosts(updatedPosts)
                                             await storage.set(`${currentUsername}_targetPostUrls`, updatedPosts)
-                                            await storage.set("global_targetPostUrls", updatedPosts)
                                         }
                                         setNewPostUrl("")
                                     }
@@ -1857,6 +1803,33 @@ function Dashboard() {
 
                     {activeTab === "targeting" && (
                         <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                            {/* Per-Account Strategy Selector Banner */}
+                            {availableAccounts.length > 0 && (
+                                <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 backdrop-blur-xl">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                                            <Users className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-bold text-white uppercase tracking-wider">Account Strategy Profile</h4>
+                                            <p className="text-xs text-slate-400 font-medium">Select an Instagram profile to configure its independent strategy and targets.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-xs font-bold text-slate-400">Editing Strategy For:</span>
+                                        <select
+                                            value={currentUsername}
+                                            onChange={(e) => setSelectedProfileUsername(e.target.value)}
+                                            className="bg-slate-950 text-amber-400 font-bold text-sm px-4 py-2.5 rounded-xl border border-amber-500/40 focus:outline-none focus:border-amber-400 cursor-pointer shadow-lg shadow-amber-500/5"
+                                        >
+                                            {availableAccounts.map(acc => (
+                                                <option key={acc} value={acc}>@{acc}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
                                     <h3 className="text-lg font-black tracking-tight mb-8 uppercase text-slate-400 tracking-[0.2em]">Active Action Modules</h3>
@@ -1869,12 +1842,7 @@ function Dashboard() {
                                         ].map(item => (
                                             <button
                                                 key={item.id}
-                                                onClick={async () => {
-                                                    const updated = { ...config, [item.id]: !config[item.id] }
-                                                    setConfig(updated)
-                                                    await storage.set(`${currentUsername}_botConfig`, updated)
-                                                    await storage.set("global_botConfig", updated)
-                                                }}
+                                                onClick={() => setConfig({ ...config, [item.id]: !config[item.id] })}
                                                 className={`w-full flex items-center justify-between p-6 rounded-2xl transition-all border ${config[item.id]
                                                     ? "bg-slate-900 border-primary-500/50 shadow-lg shadow-primary-500/5"
                                                     : "bg-slate-950/50 border-slate-800 opacity-50 grayscale"
@@ -1917,12 +1885,7 @@ function Dashboard() {
                                         ].map(sourceItem => (
                                             <button
                                                 key={sourceItem.id}
-                                                onClick={async () => {
-                                                    const updated = { ...config, [sourceItem.id]: !config[sourceItem.id] }
-                                                    setConfig(updated)
-                                                    await storage.set(`${currentUsername}_botConfig`, updated)
-                                                    await storage.set("global_botConfig", updated)
-                                                }}
+                                                onClick={() => setConfig({ ...config, [sourceItem.id]: !config[sourceItem.id] })}
                                                 className={`w-full flex items-center justify-between p-6 rounded-2xl transition-all border ${config[sourceItem.id]
                                                     ? "bg-slate-900 border-primary-500/50 shadow-lg shadow-primary-500/5"
                                                     : "bg-slate-950/50 border-slate-800 opacity-50 grayscale"
@@ -1951,12 +1914,7 @@ function Dashboard() {
                                             {(hashtags || []).map(tag => (
                                                 <span key={tag} className="px-5 py-2.5 bg-slate-900 text-white text-xs rounded-xl font-bold border border-slate-800 flex items-center gap-3">
                                                     <span className="text-primary-500 font-black">#</span> {tag.replace('#', '')}
-                                                    <button onClick={async () => {
-                                                        const updated = (hashtags || []).filter(t => t !== tag)
-                                                        setHashtags(updated)
-                                                        await storage.set(`${currentUsername}_targetHashtags`, updated)
-                                                        await storage.set("global_targetHashtags", updated)
-                                                    }} className="text-slate-600 hover:text-rose-500 font-black text-lg">×</button>
+                                                    <button onClick={() => setHashtags((hashtags || []).filter(t => t !== tag))} className="text-slate-600 hover:text-rose-500 font-black text-lg">×</button>
                                                 </span>
                                             ))}
                                             <input
@@ -1980,12 +1938,7 @@ function Dashboard() {
                                             {(competitors || []).map(c => (
                                                 <span key={c} className="px-5 py-2.5 bg-primary-500/10 text-primary-300 text-xs rounded-xl font-bold border border-primary-500/20 flex items-center gap-3">
                                                     <span className="text-primary-500 font-black">@</span> {c.replace('@', '')}
-                                                    <button onClick={async () => {
-                                                        const updated = (competitors || []).filter(i => i !== c)
-                                                        setCompetitors(updated)
-                                                        await storage.set(`${currentUsername}_targetCompetitors`, updated)
-                                                        await storage.set("global_targetCompetitors", updated)
-                                                    }} className="text-primary-800 hover:text-rose-500 font-black text-lg">×</button>
+                                                    <button onClick={() => setCompetitors((competitors || []).filter(i => i !== c))} className="text-primary-800 hover:text-rose-500 font-black text-lg">×</button>
                                                 </span>
                                             ))}
                                             <input
@@ -2011,12 +1964,7 @@ function Dashboard() {
                                                     <span key={url} className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 font-bold flex items-center gap-2">
                                                         <span className="max-w-[380px] truncate">{url}</span>
                                                         <button
-                                                            onClick={async () => {
-                                                                const updated = (targetPosts || []).filter((u) => u !== url)
-                                                                setTargetPosts(updated)
-                                                                await storage.set(`${currentUsername}_targetPostUrls`, updated)
-                                                                await storage.set("global_targetPostUrls", updated)
-                                                            }}
+                                                            onClick={() => setTargetPosts((targetPosts || []).filter((u) => u !== url))}
                                                             className="text-slate-500 hover:text-rose-400"
                                                         >
                                                             ×
