@@ -1,4 +1,4 @@
-$version = "1.2.5"
+$version = "1.2.6"
 $appName = "SocialRadar"
 $buildDirName = "chrome-mv3-prod"
 $targetName = "$appName-v$version"

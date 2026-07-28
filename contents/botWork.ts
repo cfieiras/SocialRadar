@@ -3,7 +3,8 @@ import { Storage } from "@plasmohq/storage"
 import { detectActiveUsername, extractBestAvatarUrl, fetchAudienceDatabaseFromSupabase, storeCurrentUserProfile, syncAudienceDatabaseToSupabase } from "../lib/instagramApi"
 
 export const config: PlasmoCSConfig = {
-    matches: ["https://www.instagram.com/*"]
+    matches: ["https://www.instagram.com/*"],
+    all_frames: false
 }
 
 const storage = new Storage({
@@ -249,11 +250,207 @@ class InstagramBot {
     }
 
     private async stopBot(reason: string) {
+        // Multi-Account Check
+        const multiAccountEnabled = await storage.get<boolean>("multiAccountEnabled")
+        if (multiAccountEnabled && (reason.toLowerCase().includes("limit") || reason.toLowerCase().includes("daily") || reason.toLowerCase().includes("no active tasks") || reason.toLowerCase().includes("empty"))) {
+            const multiAccounts = await storage.get<{username: string, password: string}[]>("multiAccounts") || []
+            if (multiAccounts.length > 0) {
+                const currentIndex = multiAccounts.findIndex(a => a.username.toLowerCase() === this.activeUsername.toLowerCase())
+                let nextAccount = ""
+                
+                if (currentIndex !== -1 && currentIndex < multiAccounts.length - 1) {
+                    nextAccount = multiAccounts[currentIndex + 1].username
+                } else if (currentIndex === -1) {
+                    nextAccount = multiAccounts[0].username
+                }
+
+                if (nextAccount && nextAccount.toLowerCase() !== this.activeUsername.toLowerCase()) {
+                    this.addLog(`Bot finished or limit reached. Multi-Account Rotation enabled. Switching to @${nextAccount}...`, "info")
+                    await this.generateReport(`Account Switched to @${nextAccount}`)
+                    this.isInternalStop = true
+                    this.active = false
+                    this._loopRunning = false
+                    
+                    await this.executeAccountSwitch(nextAccount)
+                    return
+                }
+            }
+        }
+
         this.isInternalStop = true
         await this.generateReport(reason)
         await storage.set("isRunning", false)
         this.active = false
         this._loopRunning = false
+    }
+
+    private simulateClick(el: HTMLElement) {
+        try {
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
+            el.click()
+        } catch (e) {
+            el.click()
+        }
+    }
+
+    private async executeAccountSwitch(nextUsername: string) {
+        this.addLog(`Starting UI account switch to @${nextUsername}...`, "info")
+        
+        // Go to home if we aren't there to ensure the sidebar is visible
+        if (window.location.pathname !== '/') {
+            window.location.href = `/?switch_account=${nextUsername}`
+            return
+        }
+
+        await this.sleep(2000)
+        const cleanTarget = nextUsername.replace("@", "").trim().toLowerCase()
+
+        // Step 1: Check if "Switch accounts" or target username is ALREADY visible
+        let switchBtn: HTMLElement | null = null
+        
+        const findSwitchBtn = () => {
+            const matches = Array.from(document.querySelectorAll('span, div, a, button')).filter(el => {
+                const text = el.textContent?.trim().toLowerCase() || ""
+                return text === "cambiar de cuenta" || text === "cambiar cuenta" || text === "switch account" || text === "switch accounts" ||
+                       text.includes("cambiar de cuenta") || text.includes("switch account")
+            })
+            if (matches.length > 0) {
+                // Sort by shortest text length to pick the innermost leaf element, NOT the huge container div!
+                matches.sort((a, b) => (a.textContent?.trim().length || 0) - (b.textContent?.trim().length || 0))
+                const best = matches[0]
+                return (best.closest('a, [role="button"], div[tabindex="0"], div.html-div') || best) as HTMLElement
+            }
+            return null
+        }
+
+        switchBtn = findSwitchBtn()
+
+        if (!switchBtn) {
+            // Need to click "More" / "Más" / "Configuración" Hamburger menu
+            const findMoreSvg = () => {
+                const svgs = Array.from(document.querySelectorAll('svg'))
+                for (const svg of svgs) {
+                    const label = (svg.getAttribute('aria-label') || '').toLowerCase()
+                    const title = (svg.querySelector('title')?.textContent || '').toLowerCase()
+                    if (label.includes('configuraci') || label.includes('settings') || label.includes('más') || label.includes('more') || label.includes('menú') ||
+                        title.includes('configuraci') || title.includes('settings') || title.includes('más') || title.includes('more') || title.includes('menú')) {
+                        return svg
+                    }
+                }
+                return null
+            }
+
+            const moreSvg = findMoreSvg()
+            let moreClicked = false
+            if (moreSvg) {
+                const btn = (moreSvg.closest('a, [role="button"], div[tabindex="0"], div.html-div') || moreSvg.parentElement) as HTMLElement
+                if (btn) {
+                    this.addLog("Clicking 'More' / 'Configuración' menu...", "info")
+                    this.simulateClick(btn)
+                    moreClicked = true
+                }
+            }
+
+            if (!moreClicked) {
+                // Fallback text search for "More" / "Más" / "Opciones" / "Configuración"
+                const elements = Array.from(document.querySelectorAll('span, div')).filter(s => {
+                    const txt = s.textContent?.trim().toLowerCase() || ""
+                    return txt === 'more' || txt === 'más' || txt === 'opciones' || txt === 'menú' || txt === 'configuración'
+                })
+                if (elements.length > 0) {
+                    const btn = (elements[elements.length - 1].closest('a, [role="button"], div[tabindex="0"], div.html-div') || elements[elements.length - 1]) as HTMLElement
+                    if (btn) {
+                        this.addLog("Clicking 'More' menu fallback...", "info")
+                        this.simulateClick(btn)
+                        moreClicked = true
+                    }
+                }
+            }
+
+            if (!moreClicked) {
+                this.addLog("Failed to find the 'More' / 'Configuración' menu for account switching. Please ensure sidebar is visible.", "error")
+                await this.stopBot("Account switch failed: UI menu missing")
+                return
+            }
+
+            // Retry waiting for "Switch accounts" / "Cambiar de cuenta" option up to 5 seconds
+            for (let i = 0; i < 10; i++) {
+                await this.sleep(500)
+                switchBtn = findSwitchBtn()
+                if (switchBtn) break
+            }
+        }
+
+        if (!switchBtn) {
+            this.addLog("Failed to find 'Switch accounts' option in popover menu.", "error")
+            await this.stopBot("Account switch failed: 'Switch accounts' option missing")
+            return
+        }
+
+        this.addLog("Clicking 'Switch accounts' option...", "info")
+        this.simulateClick(switchBtn)
+        await this.sleep(2000) // Wait for account list modal to render
+
+        // Step 2: Find and click target username in the modal (retry up to 10 seconds)
+        let targetBtn: HTMLElement | null = null
+        let modalTextDump: string[] = []
+
+        for (let i = 0; i < 20; i++) {
+            await this.sleep(500)
+            
+            // Scope search to the open modal dialogs first, or fall back to document
+            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'))
+            const searchRoot = dialogs.length > 0 ? dialogs[dialogs.length - 1] : document
+
+            const allElements = Array.from(searchRoot.querySelectorAll('span, div, button, a, img'))
+            modalTextDump = []
+
+            for (const el of allElements) {
+                // Collect text for debug dump if needed
+                const rawTxt = el.textContent?.trim() || ""
+                if (rawTxt && rawTxt.length < 40 && !modalTextDump.includes(rawTxt)) {
+                    modalTextDump.push(rawTxt)
+                }
+
+                // 1. Check img alt (avatar alt text often includes the username)
+                if (el.tagName === 'IMG') {
+                    const alt = (el.getAttribute('alt') || '').toLowerCase()
+                    if (alt.includes(cleanTarget)) {
+                        targetBtn = (el.closest('button, [role="button"], div[tabindex="0"], div.html-div, a') || el) as HTMLElement
+                        break
+                    }
+                }
+                // 2. Check link href
+                if (el.tagName === 'A') {
+                    const href = (el.getAttribute('href') || '').toLowerCase()
+                    if (href.includes(`/${cleanTarget}`)) {
+                        targetBtn = el as HTMLElement
+                        break
+                    }
+                }
+                // 3. Check text content token matching (e.g. "offsetframe Offset Frame")
+                const txt = rawTxt.toLowerCase()
+                if (txt) {
+                    const tokens = txt.split(/[\s\n\r@:]+/).map(w => w.toLowerCase())
+                    if (tokens.includes(cleanTarget) || txt === cleanTarget || txt === `@${cleanTarget}`) {
+                        targetBtn = (el.closest('button, [role="button"], div[tabindex="0"], div.html-div, a') || el) as HTMLElement
+                        break
+                    }
+                }
+            }
+            if (targetBtn) break
+        }
+
+        if (!targetBtn) {
+            const visibleText = modalTextDump.slice(0, 10).join(" | ")
+            this.addLog(`Account @${cleanTarget} not found in Switcher list. Visible items in modal: [${visibleText}]`, "error")
+            await this.stopBot("Account switch failed: Target account not found in list")
+            return
+        }
+
+        this.addLog(`Clicking @${cleanTarget} in the account switcher...`, "success")
+        this.simulateClick(targetBtn)
     }
 
     private async generateReport(reason: string) {
@@ -398,19 +595,56 @@ class InstagramBot {
             // If the URL has ?audit=true or ?start_audit=true, run the analysis even if the bot is not "Running"
             const params = new URLSearchParams(window.location.search)
             const isAudit = params.get('audit') === 'true' || params.get('start_audit') === 'true'
+            const switchAccountTarget = params.get('switch_account')
+            
+            if (switchAccountTarget) {
+                this.showAuditOverlay()
+                this.addLog(`⚡ Resuming account switch to @${switchAccountTarget}...`, "info")
+                setTimeout(() => this.executeAccountSwitch(switchAccountTarget), 3000)
+                return
+            }
+
             if (isAudit) {
                 this.showAuditOverlay()
-                this.addLog("âš¡ Manual Audit Triggered. Intercepting Network...", "info")
-                setTimeout(() => this.analyzeOwnProfile(), 2000)
+                this.addLog("⚡ Manual Audit Triggered. Intercepting Network...", "info")
+                setTimeout(async () => {
+                    await this.analyzeOwnProfile()
+                    await storage.set("lastNavTime", 0)
+                    window.location.href = "https://www.instagram.com/?variant=audit_complete"
+                }, 2000)
             }
         } catch (e) { }
+    }
+
+    private async logActiveConfiguration() {
+        try {
+            const actions: string[] = []
+            if (this.config.likeEnabled) actions.push(`Like (Limit: ${this.delayConfig.sessionLikeLimit || 100})`)
+            if (this.config.followEnabled) actions.push(`Follow (Limit: ${this.delayConfig.sessionFollowLimit || 100})`)
+            if (this.config.commentEnabled || this.config.dmEnabled) actions.push(`Comment (Limit: ${this.delayConfig.sessionCommentLimit || 25})`)
+            if (this.config.unfollowEnabled) actions.push(`Unfollow`)
+
+            const sources: string[] = []
+            if (this.config.sourceHashtags) sources.push('Hashtags')
+            if (this.config.sourceCompetitors) sources.push('Competitors')
+            if (this.config.sourcePosts) sources.push('Specific Posts')
+
+            const multiAccountEnabled = await storage.get<boolean>("multiAccountEnabled")
+
+            const actionsStr = actions.length > 0 ? actions.join(', ') : 'None'
+            const sourcesStr = sources.length > 0 ? sources.join(', ') : 'None'
+            const rotationStr = multiAccountEnabled ? 'ENABLED 🔄' : 'DISABLED'
+
+            this.addLog(`📋 Active Config: Actions [${actionsStr}] | Sources [${sourcesStr}] | Multi-Account Rotation: ${rotationStr}`, "info")
+        } catch (e) {}
     }
 
     async listenToToggles() {
         const isRunning = await storage.get<boolean>("isRunning")
         this.active = !!isRunning
         if (this.active) {
-            this.addLog("Bot initialized and running", "success")
+            this.addLog(`Bot initialized and running [${this.instanceId.slice(0,4)}]`, "success")
+            await this.logActiveConfiguration()
             this.createStatusOverlay()
             this.runLoop()
         }
@@ -500,10 +734,19 @@ class InstagramBot {
         }
     }
 
+    private instanceId = Math.random().toString(36).substring(2, 15);
+
     private async startBotSequence() {
         if (this.active && this._loopRunning) return
         this.active = true
-        this.addLog(">>> ENGINE LAUNCHED: Automation Online", "success")
+        const finalLockRes = await new Promise<any>(res => chrome.storage.local.get("activeBotInstance", res));
+        if (finalLockRes.activeBotInstance !== this.instanceId) {
+            console.log(`SocialRadar: Another tab took the lock. Aborting start in this tab. (${this.instanceId})`);
+            this.active = false;
+            return;
+        }
+
+        this.addLog(`>>> ENGINE LAUNCHED: Automation Online [${this.instanceId.slice(0,4)}]`, "success")
         await this.syncActiveUsername()
         this.runLoopAccountUsername = this.activeUsername
 
@@ -665,9 +908,31 @@ class InstagramBot {
     async runLoop() {
         if (this._loopRunning) return
         this._loopRunning = true
+        
+        // Take instance lock with absolute storage fetch to bypass Plasmo cache/debouncing
+        await new Promise<void>(res => chrome.storage.local.set({ activeBotInstance: this.instanceId }, () => res()))
+        await this.sleep(500) // Race condition buffer
+        const finalLockRes = await new Promise<any>(res => chrome.storage.local.get("activeBotInstance", res));
+        
+        if (finalLockRes.activeBotInstance !== this.instanceId) {
+            console.log(`SocialRadar: Another tab holds the lock. Halting this instance. (${this.instanceId} != ${finalLockRes.activeBotInstance})`)
+            this.addLog(`Bot instance suspended. Lock held by another tab or frame.`, "warning")
+            this.active = false
+            this._loopRunning = false
+            return
+        }
+
         try {
             while (this.active) {
                 try {
+                    const currentLockRes = await new Promise<any>(res => chrome.storage.local.get("activeBotInstance", res));
+                    if (currentLockRes.activeBotInstance && currentLockRes.activeBotInstance !== this.instanceId) {
+                        console.log(`SocialRadar: Another instance has taken over. Halting this background loop. (${this.instanceId})`);
+                        this.active = false;
+                        this._loopRunning = false;
+                        return;
+                    }
+
                     await this.ensureDailySessionBoundary()
                     await this.updateHealth({ lastHeartbeat: Date.now() })
                     const contextStillValid = await this.verifyRunContext()
@@ -729,21 +994,26 @@ class InstagramBot {
                 // If never scanned, OR not scanned today
                 if (!lastAudit || lastAuditDate !== today) {
                     // Check if we are ALREADY in the deep audit mode url to avoid loop re-triggering
-                    const isProcessing = url.includes("mode=deep")
+                    const isProcessing = url.includes("mode=deep") || url.includes("audit=true") || url.includes("start_audit=true")
 
                     if (!isProcessing) {
                         const myUsername = userStats?.username || await storage.get<string>("lastKnownUsername")
                         if (myUsername) {
-                            this.addLog("ðŸ›  Priority Maintenance: Daily Deep Audit required...", "wait")
+                            this.addLog("🛠 Priority Maintenance: Daily Deep Audit required...", "wait")
                             await storage.set("lastNavTime", Date.now())
                             window.location.href = `https://www.instagram.com/${myUsername}/?mode=deep`
                             return // Break loop to navigate
                         }
+                    } else if (url.includes("mode=deep")) {
+                        await this.analyzeOwnProfile()
+                        await storage.set("lastNavTime", 0)
+                        window.location.href = "https://www.instagram.com/?variant=audit_complete"
+                        return
                     }
                 }
 
                 const dialog = document.querySelector('div[role="dialog"]')
-                const modalHeader = (dialog?.querySelector('h1, h2, div') as HTMLElement)?.textContent || ""
+                const dialogTitle = (dialog?.querySelector('h1, h2, header span') as HTMLElement)?.textContent?.trim().toLowerCase() || ""
 
                 // --- CHAOTIC BEHAVIOR CHECK ---
                 if (this.config.chaosEnabled) {
@@ -755,7 +1025,7 @@ class InstagramBot {
                     const isFreshStart = (Date.now() - this.sessionStart) < 10000
 
                     if (lastChaos === 0 || (isFreshStart && isOverdue)) {
-                        this.addLog("â³ Chaos timer reset to wait full cycle.", "wait")
+                        this.addLog("⏳ Chaos timer reset to wait full cycle.", "wait")
                         lastChaos = Date.now()
                         await storage.set("lastChaosTime", lastChaos)
                     }
@@ -777,10 +1047,13 @@ class InstagramBot {
                 }
 
                 if (dialog) {
-                    if (modalHeader.includes("Followers") || modalHeader.includes("Seguidores")) {
+                    const isFollowersDialog = dialogTitle === "followers" || dialogTitle === "seguidores" || dialogTitle.includes("followers") || dialogTitle.includes("seguidores")
+                    const isLikersDialog = this.expectingLikersModal || dialogTitle === "likes" || dialogTitle === "me gusta"
+
+                    if (isFollowersDialog) {
                         await this.handleFollowersModal(dialog as HTMLElement)
                         continue // Skip grid sleep to speed up
-                    } else if (this.expectingLikersModal || modalHeader.includes("Likes") || modalHeader.includes("Me gusta")) {
+                    } else if (isLikersDialog) {
                         this.expectingLikersModal = false
                         await this.handleLikersModal(dialog as HTMLElement)
                         continue
@@ -858,9 +1131,22 @@ class InstagramBot {
                 else {
                     const lastNav = await storage.get<number>("lastNavTime") || 0
                     const waitTime = (this.delayConfig.navMin || 90) * 1000
-                    if (Date.now() - lastNav > waitTime) {
+                    const timePassed = Date.now() - lastNav
+                    
+                    if (url.includes("audit=true") || url.includes("start_audit=true") || url.includes("switch_account=")) {
+                        // Manual audit or account switch is running in the background, pause the main loop
+                        await this.sleep(5000)
+                        continue
+                    }
+
+                    if (timePassed > waitTime) {
                         await this.navigateToNextTarget()
                     } else {
+                        const remainingSecs = Math.ceil((waitTime - timePassed) / 1000)
+                        // Log roughly every 15 seconds to avoid spamming the console
+                        if (remainingSecs % 15 === 0 || remainingSecs < 5) {
+                            this.addLog(`Bot resting: ${remainingSecs}s until next navigation...`, "wait")
+                        }
                         await this.sleep(3000)
                     }
                 }
@@ -879,7 +1165,7 @@ class InstagramBot {
     }
 
     async navigateToNextTarget() {
-        if (this.postTargetQueue && this.postTargetQueue.length > 0) {
+        if (this.config.sourcePosts && this.postTargetQueue && this.postTargetQueue.length > 0) {
             const targetUsername = this.postTargetQueue.shift()
             await storage.set(this.pKey("postTargetQueue"), this.postTargetQueue)
             if (targetUsername) {
