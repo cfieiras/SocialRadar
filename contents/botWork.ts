@@ -1779,48 +1779,83 @@ class InstagramBot {
         this.addLog("Parsing Likers Modal...", "info")
         await this.sleep(2000)
         
+        const modal = (dialog.closest('div[role="dialog"]') as HTMLElement) || dialog
+        
+        // Find the actual scroll container inside the modal
+        const findScrollContainer = (): HTMLElement => {
+            const direct = modal.querySelector('._aano, div[style*="overflow-y: auto"], div[style*="overflow-y: scroll"], div[class*="overflow-y"]') as HTMLElement
+            if (direct && direct.scrollHeight > direct.clientHeight) return direct
+
+            const allDivs = Array.from(modal.querySelectorAll('div')) as HTMLElement[]
+            const scrollable = allDivs.find(d => {
+                const style = window.getComputedStyle(d)
+                return (style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflow === 'auto' || style.overflow === 'scroll') && d.scrollHeight > d.clientHeight
+            })
+            if (scrollable) return scrollable
+
+            const overflowAny = allDivs.find(d => d.scrollHeight > 0 && d.scrollHeight > d.clientHeight && d.clientHeight > 100)
+            return overflowAny || modal
+        }
+
+        const scrollContainer = findScrollContainer()
+        const ignoreList = ['explore', 'reels', 'stories', 'direct', 'saved', 'settings', 'your_activity', 'qr', 'p', 'about', 'help', 'liked_by', 'legal', 'privacy', 'terms']
+        const likers = new Set<string>()
+
+        const scrapeCurrentDom = () => {
+            const links = modal.querySelectorAll('a[href^="/"], a[href*="instagram.com/"]')
+            for (const link of Array.from(links)) {
+                let href = link.getAttribute('href') || ''
+                if (href.startsWith('http')) {
+                    try { href = new URL(href).pathname } catch(e) {}
+                }
+                if (href.includes('/p/') || href.includes('/reels/') || href.includes('/reel/') || href.includes('/explore/') || href.includes('/liked_by/')) continue;
+                
+                const cleanHref = href.split('?')[0].replace(/\//g, '').trim().toLowerCase()
+                if (cleanHref && cleanHref !== this.runLoopAccountUsername && !ignoreList.includes(cleanHref) && cleanHref.length > 2) {
+                    likers.add(cleanHref)
+                }
+            }
+        }
+
+        // First scrape before scrolling
+        scrapeCurrentDom()
+
         let lastHeight = 0
         let scrolls = 0
-        
-        let scrollContainer = dialog.querySelector('div[style*="overflow"]') || dialog.querySelector('div[class*="overflow-y"]')
-        if (!scrollContainer) {
-            const divs = Array.from(dialog.querySelectorAll('div'))
-            scrollContainer = divs.find(d => {
-                const style = window.getComputedStyle(d)
-                return style.overflowY === 'auto' || style.overflowY === 'scroll'
-            }) || dialog
-        }
-        
-        while (scrolls < 3) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight
-            await this.sleep(1500)
-            if (scrollContainer.scrollHeight === lastHeight) break
-            lastHeight = scrollContainer.scrollHeight
-            scrolls++
-        }
-        
-        const likers = new Set<string>()
-        const links = dialog.querySelectorAll('a[href^="/"]')
-        const ignoreList = ['explore', 'reels', 'stories', 'direct', 'saved', 'settings', 'your_activity', 'qr', 'p', 'about', 'help', 'liked_by']
-        
-        for (const link of Array.from(links)) {
-            const href = link.getAttribute('href') || ''
-            if (href.includes('/p/') || href.includes('/reels/') || href.includes('/explore/') || href.includes('/liked_by/')) continue;
-            
-            const cleanHref = href.split('?')[0]
-            const username = cleanHref.replace(/\//g, '')
-            if (username && username !== this.runLoopAccountUsername && !ignoreList.includes(username) && username.length > 2) {
-                likers.add(username)
+        const maxScrolls = 10
+
+        while (scrolls < maxScrolls) {
+            // Scroll incrementally down to trigger DOM updates & virtualized rendering
+            if (scrollContainer && scrollContainer !== modal) {
+                scrollContainer.scrollTop += 400
+            } else {
+                window.scrollBy(0, 400)
             }
+            
+            await this.sleep(1200)
+            
+            // Scrape DOM at each scroll step before virtualized items unmount!
+            scrapeCurrentDom()
+
+            const currentHeight = scrollContainer ? scrollContainer.scrollHeight : document.body.scrollHeight
+            if (currentHeight === lastHeight && scrolls > 3) {
+                // Try scrolling to absolute bottom to trigger final batch
+                if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight
+                await this.sleep(1000)
+                scrapeCurrentDom()
+                break
+            }
+            lastHeight = currentHeight
+            scrolls++
         }
         
         if (likers.size > 0) {
             const newTargets = Array.from(likers)
-            this.addLog(`Found ${newTargets.length} likers.`, "success")
+            this.addLog(`Found ${newTargets.length} likers in modal.`, "success")
             this.postTargetQueue = [...this.postTargetQueue, ...newTargets]
             await storage.set(this.pKey("postTargetQueue"), this.postTargetQueue)
         } else {
-            this.addLog("No likers found.", "warning")
+            this.addLog("No likers found in modal.", "warning")
         }
         
         const currentId = window.location.href.match(/(?:\/p\/|\/reels\/|\/reel\/)([\w-]+)/)?.[1]?.toLowerCase()
