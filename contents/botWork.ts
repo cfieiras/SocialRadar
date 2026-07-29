@@ -1737,21 +1737,32 @@ class InstagramBot {
         
         if (this.postInteractions.likers) {
             this.addLog("Extracting Likers from Post...", "info")
-            const likesLink = Array.from(postContainer.querySelectorAll('a, span[role="button"], div[role="button"]')).find(el => {
-                const href = el.getAttribute('href') || ''
-                const text = el.textContent?.toLowerCase().trim() || ''
-                
-                if (href.includes('/liked_by/') || text.includes('likes') || text.includes('me gusta') || text.includes('others') || text.includes('otros')) {
-                    return true
-                }
-                
-                // Catch the exact case provided by user: <span role="button">216</span>
-                if (el.tagName === 'SPAN' && el.getAttribute('role') === 'button' && /^[0-9,.]+$/.test(text)) {
-                    return true
-                }
-                
-                return false
-            })
+            
+            // 1. Explicit /liked_by/ link takes highest priority (must NEVER click user profile links!)
+            let likesLink = postContainer.querySelector('a[href*="/liked_by/"]') as HTMLElement
+
+            // 2. Fallback: Search for span/div/button elements containing "likes", "me gusta", "others", "otros" or numbers
+            if (!likesLink) {
+                const candidates = Array.from(postContainer.querySelectorAll('span[role="button"], div[role="button"], button')) as HTMLElement[]
+                likesLink = candidates.find(el => {
+                    const text = el.textContent?.toLowerCase().trim() || ''
+                    const aria = el.getAttribute('aria-label')?.toLowerCase().trim() || ''
+                    const combined = `${text} ${aria}`
+                    
+                    // Exclude standard action buttons
+                    if (combined === 'like' || combined === 'me gusta' || combined === 'comment' || combined === 'comentar' || combined === 'share' || combined === 'compartir') {
+                        return false
+                    }
+                    
+                    if (combined.includes('likes') || combined.includes('me gusta') || combined.includes('others') || combined.includes('otros') || combined.includes('personas')) {
+                        return true
+                    }
+                    if (/^[0-9,.]+\s*(likes|me gusta)?$/i.test(text)) {
+                        return true
+                    }
+                    return false
+                }) as HTMLElement
+            }
             
             if (likesLink) {
                 (likesLink as HTMLElement).click()
