@@ -329,13 +329,13 @@ class InstagramBot {
         const findSwitchBtn = () => {
             const matches = Array.from(document.querySelectorAll('span, div, a, button')).filter(el => {
                 const text = el.textContent?.trim().toLowerCase() || ""
-                return text === "cambiar de cuenta" || text === "cambiar cuenta" || text === "switch account" || text === "switch accounts" ||
+                return text === "cambiar de cuenta" || text === "cambiar cuenta" || text === "cambiar" || text === "switch account" || text === "switch accounts" || text === "switch" ||
                        text.includes("cambiar de cuenta") || text.includes("switch account")
             })
             if (matches.length > 0) {
                 matches.sort((a, b) => (a.textContent?.trim().length || 0) - (b.textContent?.trim().length || 0))
                 const best = matches[0]
-                return (best.closest('a, [role="button"], div[tabindex="0"], div.html-div') || best) as HTMLElement
+                return (best.closest('a, [role="button"], div[tabindex="0"], div.html-div, button') || best) as HTMLElement
             }
             return null
         }
