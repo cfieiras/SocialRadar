@@ -1,3 +1,26 @@
+# SocialRadar - Version 1.2.7 (Historial de Interacciones & Anti-Refollow Guard)
+Date: 2026-08-23
+
+## Milestone Summary
+This major update introduces a unified Interaction History Engine, an Anti-Refollow Guard protection system, collapsible date-grouped interaction logs, and full multi-account strategy restoration.
+
+## Key Features
+
+### 1. Unified Interaction History & Dashboard UI
+- Added a new **"Historial de Interacciones"** tab in the Dashboard with collapsible date accordions (`YYYY-MM-DD`).
+- Added real-time username search bar and action filter pills (`Todos`, `Follows`, `Unfollows`, `Likes`, `Comentarios`).
+- Interactive cards showing action badges, timestamps, profile links, and execution source.
+
+### 2. Anti-Refollow Guard Engine
+- Tracks `follow`, `unfollow`, `like`, and `comment` actions per Instagram account.
+- Automatically skips attempting to follow any user previously unfollowed or interacted with.
+
+### 3. Multi-Account Strategy & Sources
+- Restored multi-account rotation engine UI tab.
+- Restored account selector dropdown for per-account Strategy & Source configuration.
+
+---
+
 # SocialRadar - Version 1.2.3 (Daily Session Reset Fix)
 Date: 2026-04-14
 
