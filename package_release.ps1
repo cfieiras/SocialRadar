@@ -1,4 +1,5 @@
-$version = "1.2.7"
+$json = Get-Content -Raw -Path "package.json" | ConvertFrom-Json
+$version = $json.version
 $appName = "SocialRadar"
 $buildDirName = "chrome-mv3-prod"
 $targetName = "$appName-v$version"

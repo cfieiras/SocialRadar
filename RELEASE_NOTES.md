@@ -1,3 +1,24 @@
+# SocialRadar - Version 1.2.8 (Multi-Account Rotation & Supabase Cloud Sync)
+Date: 2026-08-23
+
+## Milestone Summary
+This release delivers full Multi-Account Rotation continuity, robust 3-step Instagram UI account switching, and complete cloud synchronization via Supabase for Interaction History and per-account Bot Settings & Preferences.
+
+## Key Features
+
+### 1. Multi-Account Rotation Engine
+- **Session Continuity**: Preserves `isRunning: true` during multi-account transitions so the bot automatically moves from account to account without stopping.
+- **Fail-Safe Instagram DOM Switcher**: 3-step DOM interaction sequence (`Configuración` SVG -> `Cambiar de cuenta` strict match -> Target account `@username`). Guaranteed anti-logout protections.
+- **Verification Loop & Error Diagnostics**: Empirical post-click cookie verification loop with detailed diagnostic logging for any missing accounts or failed transitions.
+- **Immediate Mission Launch**: Eliminates idle 90s cooldown on Home page after rotation, immediately launching the next target mission.
+
+### 2. Full Supabase Cloud Synchronization
+- **`bot_interaction_history` Cloud Backup**: Syncs all follows, unfollows, likes, and comments with timestamps, URLs, and details to Supabase Cloud DB.
+- **`bot_account_settings` Preferences Sync**: Backs up strategy toggles, delay configurations, target hashtags, competitor lists, target post URLs, and comment templates per account.
+- **Cloud Restoration**: Automatically recovers all settings and interaction history from Supabase when changing accounts or installing on a new device.
+
+---
+
 # SocialRadar - Version 1.2.7 (Historial de Interacciones & Anti-Refollow Guard)
 Date: 2026-08-23
 
