@@ -6,7 +6,7 @@ const storage = new Storage({
     area: "local"
 })
 import {
-    Users, Heart, MessageSquare, Settings, BarChart3,
+    Users, Heart, MessageSquare, Settings, BarChart3, BarChart2, TrendingUp, Target, Grid,
     History, Shield, Zap, Search, Bell, ExternalLink,
     ChevronRight, ChevronDown, Calendar, Play, Pause, Database, Clock, Square,
     CheckCircle2, Circle, UserPlus, UserMinus, Trash2, AlertTriangle, Activity, X, Radar, Send, Monitor, Moon, RefreshCw, Download
@@ -1577,9 +1577,10 @@ function Dashboard() {
                     )}
 
                     {activeTab === "competitors" && (() => {
-                        const topViralPosts = extractTopViralPosts(competitorsData || [])
-                        const formatBreakdown = calculateCompetitorFormatBreakdown(competitorsData || [])
-                        const totalFormatPosts = formatBreakdown.reels.count + formatBreakdown.images.count + formatBreakdown.carousels.count || 1
+                        try {
+                            const topViralPosts = extractTopViralPosts(competitorsData || [])
+                            const formatBreakdown = calculateCompetitorFormatBreakdown(competitorsData || [])
+                            const totalFormatPosts = formatBreakdown.reels.count + formatBreakdown.images.count + formatBreakdown.carousels.count || 1
 
                         return (
                             <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -1828,6 +1829,16 @@ function Dashboard() {
                                 </div>
                             </div>
                         )
+                    } catch (err) {
+                        console.error("Dashboard: Error rendering Competitor Analysis tab", err)
+                        return (
+                            <div className="p-12 bg-rose-500/10 border border-rose-500/20 rounded-[2.5rem] text-center space-y-4">
+                                <AlertTriangle className="w-12 h-12 text-rose-500 mx-auto" />
+                                <h4 className="text-xl font-black text-white">Error al cargar la pestaña de Competidores</h4>
+                                <p className="text-slate-400 text-sm max-w-md mx-auto">Ocurrió un inconveniente al procesar la información de los competidores. Intenta recargar la página o volver a intentar.</p>
+                            </div>
+                        )
+                    }
                     })()}
 
                     {activeTab === "unfollow" && (
