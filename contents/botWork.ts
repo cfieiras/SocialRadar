@@ -568,7 +568,7 @@ class InstagramBot {
             if (savedStats) this.stats = { ...this.stats, ...savedStats }
             if (savedLogs) this.logs = savedLogs
             if (savedFollows) this.followedUsers = savedFollows
-            if (savedInteractions) this.interactionHistory = savedInteractions
+            this.interactionHistory = savedInteractions || []
             if (savedPostInteractions) this.postInteractions = savedPostInteractions
             if (savedPostTargetQueue) this.postTargetQueue = savedPostTargetQueue
             const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
@@ -739,7 +739,7 @@ class InstagramBot {
         this.stats = savedStats ? { follows: 0, likes: 0, dms: 0, unfollows: 0, ...savedStats } : { follows: 0, likes: 0, dms: 0, unfollows: 0 }
         this.logs = savedLogs || []
         this.followedUsers = savedFollows || []
-        if (savedInteractions) this.interactionHistory = savedInteractions
+        this.interactionHistory = savedInteractions || []
         if (savedPI) this.postInteractions = savedPI
         if (savedPQ) this.postTargetQueue = savedPQ
         const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
