@@ -268,14 +268,8 @@ class InstagramBot {
         await this.generateReport(reason)
 
         const multiAccountEnabled = await storage.get<boolean>("multiAccountEnabled")
-        if (multiAccountEnabled && (
-            reason.toLowerCase().includes("limit") ||
-            reason.toLowerCase().includes("daily") ||
-            reason.toLowerCase().includes("no active tasks") ||
-            reason.toLowerCase().includes("empty") ||
-            reason.toLowerCase().includes("complete") ||
-            reason.toLowerCase().includes("finished")
-        )) {
+        const isManualStop = reason.toLowerCase().includes("manual") || reason.toLowerCase().includes("logout") || reason.toLowerCase().includes("session lost")
+        if (multiAccountEnabled && !isManualStop) {
             const multiAccounts = await storage.get<{username: string, password: string}[]>("multiAccounts") || []
             if (multiAccounts.length > 0) {
                 const currentIndex = multiAccounts.findIndex(a => a.username.toLowerCase() === this.activeUsername.toLowerCase())
@@ -464,6 +458,11 @@ class InstagramBot {
 
         this.addLog(`Clicking @${cleanTarget} in the account switcher...`, "success")
         this.simulateClick(targetBtn)
+
+        await this.sleep(3500)
+        this.isSwitchingAccount = false
+        this.addLog(`🔄 Cookie switch complete. Reloading Home to start session for @${cleanTarget}...`, "info")
+        window.location.href = `https://www.instagram.com/?rotated=${cleanTarget}_${Date.now()}`
     }
 
     private async generateReport(reason: string) {
