@@ -1247,3 +1247,48 @@ export function calculateCompetitorFormatBreakdown(competitorDataList: any[] = [
     }
 }
 
+export function calculateAccountFormatBreakdown(posts: any[] = []) {
+    let reels = { count: 0, likes: 0, comments: 0 }
+    let images = { count: 0, likes: 0, comments: 0 }
+    let carousels = { count: 0, likes: 0, comments: 0 }
+
+    for (const p of posts) {
+        if (!p) continue
+        const likes = Number(p.likes) || 0
+        const comments = Number(p.comments) || 0
+        const url = (p.url || "").toLowerCase()
+
+        if (url.includes('/reel/') || url.includes('/reels/')) {
+            reels.count++
+            reels.likes += likes
+            reels.comments += comments
+        } else if (p.isCarousel) {
+            carousels.count++
+            carousels.likes += likes
+            carousels.comments += comments
+        } else {
+            images.count++
+            images.likes += likes
+            images.comments += comments
+        }
+    }
+
+    return {
+        reels: {
+            count: reels.count,
+            avgLikes: reels.count > 0 ? Math.round(reels.likes / reels.count) : 0,
+            avgComments: reels.count > 0 ? Math.round(reels.comments / reels.count) : 0
+        },
+        images: {
+            count: images.count,
+            avgLikes: images.count > 0 ? Math.round(images.likes / images.count) : 0,
+            avgComments: images.count > 0 ? Math.round(images.comments / images.count) : 0
+        },
+        carousels: {
+            count: carousels.count,
+            avgLikes: carousels.count > 0 ? Math.round(carousels.likes / carousels.count) : 0,
+            avgComments: carousels.count > 0 ? Math.round(carousels.comments / carousels.count) : 0
+        }
+    }
+}
+

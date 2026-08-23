@@ -14,7 +14,7 @@ import {
 import "../style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
 import helpDemoVideo from "url:~assets/help/SocialRadar_demo_landscape_es.mp4"
-import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, syncAccountSettingsToSupabase, fetchAccountSettingsFromSupabase, extractTopViralPosts, calculateCompetitorFormatBreakdown, type ViralPostItem, type Unfollower } from "../lib/instagramApi"
+import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, syncAccountSettingsToSupabase, fetchAccountSettingsFromSupabase, extractTopViralPosts, calculateCompetitorFormatBreakdown, calculateAccountFormatBreakdown, type ViralPostItem, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
 import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
@@ -1218,60 +1218,175 @@ function Dashboard() {
 
 
 
-                            {/* New Stats Row: Engagement & Last Post */}
-                            {userStats && userStats.analyzedPostsCount > 0 && (
-                                <div className="grid grid-cols-12 gap-8">
-                                    <div className="col-span-12 bg-gradient-to-r from-primary-900/10 to-transparent border border-primary-500/20 rounded-[2.5rem] p-10 flex items-center justify-between">
-                                        <div className="flex items-center gap-6">
-                                            <div className="p-5 rounded-3xl bg-primary-500/10 border border-primary-500/20 text-primary-400">
-                                                <Clock className="w-8 h-8" />
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-black text-primary-500 uppercase tracking-widest mb-4">Content Activity</p>
-                                                <div className="flex items-center gap-8">
-                                                    <div>
-                                                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Last Post</p>
-                                                        <h4 className="text-3xl font-black text-white tracking-tighter">
-                                                            {userStats?.latestPosts?.[0]
-                                                                ? `${Math.floor((Date.now() / 1000 - userStats.latestPosts[0].timestamp) / 3600)}h ago`
-                                                                : "N/A"}
-                                                        </h4>
-                                                    </div>
-                                                    {userStats?.latestPosts?.length >= 2 && (
-                                                        <>
-                                                            <div className="w-px h-10 bg-slate-800" />
-                                                            <div>
-                                                                <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Avg Frequency</p>
-                                                                <h4 className="text-3xl font-black text-white tracking-tighter">
-                                                                    {((userStats.latestPosts[0].timestamp - userStats.latestPosts[userStats.latestPosts.length - 1].timestamp) / 3600 / 24 / userStats.latestPosts.length).toFixed(1)} <span className="text-sm text-slate-500 font-bold">days</span>
-                                                                </h4>
-                                                            </div>
-                                                        </>
-                                                    )}
+                            {/* Active Account Performance Report */}
+                            {userStats && userStats.latestPosts && userStats.latestPosts.length > 0 && (() => {
+                                const accountFormats = calculateAccountFormatBreakdown(userStats.latestPosts)
+                                const totalAccPosts = accountFormats.reels.count + accountFormats.images.count + accountFormats.carousels.count || 1
+                                const sortedPosts = [...userStats.latestPosts].sort((a, b) => (b.likes + b.comments * 2) - (a.likes + a.comments * 2))
+                                const top3Posts = sortedPosts.slice(0, 3)
+                                const avgInteractions = userStats.latestPosts.reduce((acc: number, p: any) => acc + (p.likes || 0) + (p.comments || 0), 0) / userStats.latestPosts.length || 1
+
+                                return (
+                                    <div className="space-y-8 animate-in fade-in slide-in-from-top-4 duration-500">
+                                        {/* Activity Header & Posting Frequency */}
+                                        <div className="bg-gradient-to-r from-primary-900/20 via-slate-900 to-slate-900 border border-primary-500/20 rounded-[2.5rem] p-10 flex items-center justify-between">
+                                            <div className="flex items-center gap-6">
+                                                <div className="p-5 rounded-3xl bg-primary-500/10 border border-primary-500/20 text-primary-400">
+                                                    <Clock className="w-8 h-8" />
                                                 </div>
+                                                <div>
+                                                    <p className="text-xs font-black text-primary-400 uppercase tracking-widest mb-1">Informe de Actividad de Tu Cuenta</p>
+                                                    <div className="flex items-center gap-8">
+                                                        <div>
+                                                            <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Última Publicación</p>
+                                                            <h4 className="text-2xl font-black text-white tracking-tight">
+                                                                {userStats.latestPosts[0]?.timestamp
+                                                                    ? `${Math.floor((Date.now() / 1000 - userStats.latestPosts[0].timestamp) / 3600)}h atrás`
+                                                                    : "N/A"}
+                                                            </h4>
+                                                        </div>
+                                                        {userStats.latestPosts.length >= 2 && (
+                                                            <>
+                                                                <div className="w-px h-10 bg-slate-800" />
+                                                                <div>
+                                                                    <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Frecuencia de Posteo</p>
+                                                                    <h4 className="text-2xl font-black text-white tracking-tight">
+                                                                        {((userStats.latestPosts[0].timestamp - userStats.latestPosts[userStats.latestPosts.length - 1].timestamp) / 3600 / 24 / userStats.latestPosts.length).toFixed(1)} <span className="text-sm text-slate-500 font-bold">días / post</span>
+                                                                    </h4>
+                                                                </div>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={() => setShowEngagementModal(true)}
+                                                    className="px-6 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-black text-xs transition-all flex items-center gap-2"
+                                                >
+                                                    <Activity className="w-4 h-4 text-purple-400" /> Análisis Completo
+                                                </button>
                                             </div>
                                         </div>
 
-                                        <div className="flex gap-4">
-                                            {[... (userStats?.latestPosts || [])]
-                                                .sort((a, b) => b.likes - a.likes)
-                                                .slice(0, 3)
-                                                .map((post, i) => (
-                                                    <div key={i} className="group relative w-16 h-16 rounded-2xl overflow-hidden border-2 border-slate-800 hover:border-primary-500 transition-all cursor-pointer" onClick={() => window.open(`https://instagram.com/p/${post.shortcode}`, "_blank")}>
-                                                        <img src={sanitizeImageUrl(post.url)} className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                                            <Heart className="w-4 h-4 text-white fill-current" />
+                                        {/* Top 3 Performing Posts Cards */}
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <h4 className="text-xl font-black text-white flex items-center gap-3">
+                                                    <TrendingUp className="w-5 h-5 text-emerald-400" />
+                                                    Mejores Publicaciones de Tu Cuenta
+                                                </h4>
+                                                <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Ordenados por Interacción</span>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                                {top3Posts.map((post: any, idx: number) => {
+                                                    const score = (post.likes || 0) + (post.comments || 0) * 2
+                                                    const multiplier = (score / (avgInteractions || 1)).toFixed(1)
+
+                                                    return (
+                                                        <div key={idx} className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] overflow-hidden group hover:border-emerald-500/30 transition-all flex flex-col justify-between">
+                                                            <div className="relative h-44 w-full bg-slate-950 overflow-hidden">
+                                                                <img
+                                                                    src={sanitizeImageUrl(post.url)}
+                                                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                                                    alt={`Tu Post #${idx + 1}`}
+                                                                />
+                                                                <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[11px] font-black border border-slate-700">
+                                                                    Top #{idx + 1}
+                                                                </div>
+                                                                <div className="absolute top-3 right-3 flex items-center gap-2">
+                                                                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/90 backdrop-blur-md text-slate-950 text-[11px] font-black shadow-lg">
+                                                                        🔥 {multiplier}x Rendimiento
+                                                                    </span>
+                                                                    <a
+                                                                        href={post.url || `https://www.instagram.com/p/${post.shortcode}/`}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-white backdrop-blur-md border border-slate-700 transition-colors"
+                                                                        title="Ver post en Instagram"
+                                                                    >
+                                                                        <ExternalLink className="w-3.5 h-3.5" />
+                                                                    </a>
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="p-5 space-y-3">
+                                                                <div className="grid grid-cols-2 gap-3 text-center py-2 bg-slate-950/40 rounded-xl border border-slate-800">
+                                                                    <div>
+                                                                        <p className="text-[10px] uppercase font-black text-slate-500">Likes</p>
+                                                                        <p className="text-white font-black text-sm">{(post.likes || 0).toLocaleString()}</p>
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-[10px] uppercase font-black text-slate-500">Comentarios</p>
+                                                                        <p className="text-white font-black text-sm">{(post.comments || 0).toLocaleString()}</p>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
                                                         </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        {/* Format Breakdown for Active Account */}
+                                        <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-8 space-y-6">
+                                            <h4 className="text-xl font-black text-white flex items-center gap-3">
+                                                <Grid className="w-5 h-5 text-purple-400" />
+                                                Tipos de Contenido que Publicas
+                                            </h4>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                                {/* Reels */}
+                                                <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800 space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-sm font-black text-white flex items-center gap-2">🎬 Reels</span>
+                                                        <span className="text-xs text-purple-400 font-bold">{Math.round((accountFormats.reels.count / totalAccPosts) * 100)}%</span>
                                                     </div>
-                                                ))}
-                                            <div className="flex flex-col justify-center ml-2">
-                                                <p className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Top 3 Performing</p>
-                                                <p className="text-xs font-bold text-slate-300">Based on likes</p>
+                                                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                        <div className="bg-purple-500 h-full rounded-full" style={{ width: `${Math.round((accountFormats.reels.count / totalAccPosts) * 100)}%` }} />
+                                                    </div>
+                                                    <div className="flex justify-between text-xs text-slate-400 pt-2 font-medium">
+                                                        <span>Prom. Likes: <strong className="text-white">{accountFormats.reels.avgLikes}</strong></span>
+                                                        <span>Prom. Coms: <strong className="text-white">{accountFormats.reels.avgComments}</strong></span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Single Posts */}
+                                                <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800 space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-sm font-black text-white flex items-center gap-2">📸 Posts Estáticos</span>
+                                                        <span className="text-xs text-indigo-400 font-bold">{Math.round((accountFormats.images.count / totalAccPosts) * 100)}%</span>
+                                                    </div>
+                                                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                        <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${Math.round((accountFormats.images.count / totalAccPosts) * 100)}%` }} />
+                                                    </div>
+                                                    <div className="flex justify-between text-xs text-slate-400 pt-2 font-medium">
+                                                        <span>Prom. Likes: <strong className="text-white">{accountFormats.images.avgLikes}</strong></span>
+                                                        <span>Prom. Coms: <strong className="text-white">{accountFormats.images.avgComments}</strong></span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Carousels */}
+                                                <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800 space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-sm font-black text-white flex items-center gap-2">🖼️ Carruseles</span>
+                                                        <span className="text-xs text-emerald-400 font-bold">{Math.round((accountFormats.carousels.count / totalAccPosts) * 100)}%</span>
+                                                    </div>
+                                                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                        <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${Math.round((accountFormats.carousels.count / totalAccPosts) * 100)}%` }} />
+                                                    </div>
+                                                    <div className="flex justify-between text-xs text-slate-400 pt-2 font-medium">
+                                                        <span>Prom. Likes: <strong className="text-white">{accountFormats.carousels.avgLikes}</strong></span>
+                                                        <span>Prom. Coms: <strong className="text-white">{accountFormats.carousels.avgComments}</strong></span>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            )}
+                                )
+                            })()}
 
                             <div className="grid grid-cols-2 gap-8">
                                 {/* Engagement Rate Unified Card */}
