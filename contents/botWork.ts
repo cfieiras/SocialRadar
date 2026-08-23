@@ -311,104 +311,86 @@ class InstagramBot {
     }
 
     private async executeAccountSwitch(nextUsername: string) {
-        this.addLog(`Starting UI account switch to @${nextUsername}...`, "info")
+        const cleanTarget = nextUsername.replace("@", "").trim().toLowerCase()
+        this.addLog(`Starting UI account switch to @${cleanTarget}...`, "info")
 
         if (window.location.pathname !== '/') {
-            window.location.href = `/?switch_account=${nextUsername}`
+            window.location.href = `/?switch_account=${cleanTarget}`
             return
         }
 
         await this.sleep(2000)
-        const cleanTarget = nextUsername.replace("@", "").trim().toLowerCase()
 
-        let switchBtn: HTMLElement | null = null
-        const findSwitchBtn = () => {
-            const matches = Array.from(document.querySelectorAll('span, div, a, button')).filter(el => {
-                const text = el.textContent?.trim().toLowerCase() || ""
-                return text === "cambiar de cuenta" || text === "cambiar cuenta" || text === "cambiar" || text === "switch account" || text === "switch accounts" || text === "switch" ||
-                       text.includes("cambiar de cuenta") || text.includes("switch account")
+        // Step 1: Find "Más" / "Configuración" menu button
+        const findMoreMenuBtn = (): HTMLElement | null => {
+            const svgs = Array.from(document.querySelectorAll('svg'))
+            for (const svg of svgs) {
+                const label = (svg.getAttribute('aria-label') || '').toLowerCase()
+                const title = (svg.querySelector('title')?.textContent || '').toLowerCase()
+                if (label.includes('configuraci') || label.includes('más') || label.includes('more') || label.includes('settings') || label.includes('menú') ||
+                    title.includes('configuraci') || title.includes('más') || title.includes('more') || title.includes('settings') || title.includes('menú')) {
+                    return (svg.closest('a, [role="button"], div[tabindex="0"], button') || svg.parentElement) as HTMLElement
+                }
+                const lines = svg.querySelectorAll('line')
+                if (lines.length >= 3) {
+                    return (svg.closest('a, [role="button"], div[tabindex="0"], button') || svg.parentElement) as HTMLElement
+                }
+            }
+            const textEls = Array.from(document.querySelectorAll('span, a, div')).filter(el => {
+                const txt = el.textContent?.trim().toLowerCase() || ""
+                return txt === 'más' || txt === 'more' || txt === 'configuración' || txt === 'settings'
             })
-            if (matches.length > 0) {
-                matches.sort((a, b) => (a.textContent?.trim().length || 0) - (b.textContent?.trim().length || 0))
-                const best = matches[0]
-                return (best.closest('a, [role="button"], div[tabindex="0"], div.html-div, button') || best) as HTMLElement
+            if (textEls.length > 0) {
+                const best = textEls[textEls.length - 1]
+                return (best.closest('a, [role="button"], div[tabindex="0"], button') || best) as HTMLElement
             }
             return null
         }
 
-        switchBtn = findSwitchBtn()
-
-        if (!switchBtn) {
-            const findMoreSvg = () => {
-                const svgs = Array.from(document.querySelectorAll('svg'))
-                for (const svg of svgs) {
-                    const label = (svg.getAttribute('aria-label') || '').toLowerCase()
-                    const title = (svg.querySelector('title')?.textContent || '').toLowerCase()
-                    if (label.includes('configuraci') || label.includes('settings') || label.includes('más') || label.includes('more') || label.includes('menú') ||
-                        title.includes('configuraci') || title.includes('settings') || title.includes('más') || title.includes('more') || title.includes('menú')) {
-                        return svg
-                    }
-                }
-                return null
-            }
-
-            const moreSvg = findMoreSvg()
-            let moreClicked = false
-            if (moreSvg) {
-                const btn = (moreSvg.closest('a, [role="button"], div[tabindex="0"], div.html-div') || moreSvg.parentElement) as HTMLElement
-                if (btn) {
-                    this.addLog("Clicking 'More' / 'Configuración' menu...", "info")
-                    this.simulateClick(btn)
-                    moreClicked = true
-                }
-            }
-
-            if (!moreClicked) {
-                const elements = Array.from(document.querySelectorAll('span, div')).filter(s => {
-                    const txt = s.textContent?.trim().toLowerCase() || ""
-                    return txt === 'more' || txt === 'más' || txt === 'opciones' || txt === 'menú' || txt === 'configuración'
-                })
-                if (elements.length > 0) {
-                    const btn = (elements[elements.length - 1].closest('a, [role="button"], div[tabindex="0"], div.html-div') || elements[elements.length - 1]) as HTMLElement
-                    if (btn) {
-                        this.addLog("Clicking 'More' menu fallback...", "info")
-                        this.simulateClick(btn)
-                        moreClicked = true
+        // Step 2: Find strictly "Cambiar de cuenta" option (NOT "Cerrar sesión")
+        const findSwitchOption = (): HTMLElement | null => {
+            const elements = Array.from(document.querySelectorAll('span, div, a, button'))
+            for (const el of elements) {
+                const txt = el.textContent?.trim().toLowerCase() || ""
+                if (txt === "cambiar de cuenta" || txt === "cambiar cuenta" || txt === "switch account" || txt === "switch accounts") {
+                    if (!txt.includes("cerrar") && !txt.includes("logout") && !txt.includes("log out") && !txt.includes("salir")) {
+                        return (el.closest('a, [role="button"], div[tabindex="0"], div.html-div, button') || el) as HTMLElement
                     }
                 }
             }
+            return null
+        }
 
-            if (!moreClicked) {
-                this.addLog("Failed to find 'More' / 'Configuración' menu for account switching.", "error")
-                await storage.set("isRunning", false)
-                this.active = false
-                this._loopRunning = false
-                return
-            }
+        let switchOption = findSwitchOption()
 
-            for (let i = 0; i < 10; i++) {
-                await this.sleep(500)
-                switchBtn = findSwitchBtn()
-                if (switchBtn) break
+        if (!switchOption) {
+            const moreBtn = findMoreMenuBtn()
+            if (moreBtn) {
+                this.addLog("Clicking 'Más' / 'Configuración' menu...", "info")
+                this.simulateClick(moreBtn)
+                await this.sleep(1500)
+                switchOption = findSwitchOption()
             }
         }
 
-        if (!switchBtn) {
-            this.addLog("Failed to find 'Switch accounts' option in popover menu.", "error")
+        if (!switchOption) {
+            this.addLog("Failed to find 'Cambiar de cuenta' option in Instagram menu.", "error")
             await storage.set("isRunning", false)
             this.active = false
             this._loopRunning = false
+            this.isSwitchingAccount = false
             return
         }
 
-        this.addLog("Clicking 'Switch accounts' option...", "info")
-        this.simulateClick(switchBtn)
+        this.addLog("Clicking 'Cambiar de cuenta' option...", "info")
+        this.simulateClick(switchOption)
         await this.sleep(2000)
 
+        // Step 3: Find target account in the modal
         let targetBtn: HTMLElement | null = null
         let modalTextDump: string[] = []
 
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 15; i++) {
             await this.sleep(500)
             const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'))
             const searchRoot = dialogs.length > 0 ? dialogs[dialogs.length - 1] : document
@@ -421,24 +403,15 @@ class InstagramBot {
                     modalTextDump.push(rawTxt)
                 }
 
+                const txt = rawTxt.toLowerCase()
+                if (txt === cleanTarget || txt === `@${cleanTarget}`) {
+                    targetBtn = (el.closest('button, [role="button"], div[tabindex="0"], div.html-div, a') || el) as HTMLElement
+                    break
+                }
+
                 if (el.tagName === 'IMG') {
                     const alt = (el.getAttribute('alt') || '').toLowerCase()
                     if (alt.includes(cleanTarget)) {
-                        targetBtn = (el.closest('button, [role="button"], div[tabindex="0"], div.html-div, a') || el) as HTMLElement
-                        break
-                    }
-                }
-                if (el.tagName === 'A') {
-                    const href = (el.getAttribute('href') || '').toLowerCase()
-                    if (href.includes(`/${cleanTarget}`)) {
-                        targetBtn = el as HTMLElement
-                        break
-                    }
-                }
-                const txt = rawTxt.toLowerCase()
-                if (txt) {
-                    const tokens = txt.split(/[\s\n\r@:]+/).map(w => w.toLowerCase())
-                    if (tokens.includes(cleanTarget) || txt === cleanTarget || txt === `@${cleanTarget}`) {
                         targetBtn = (el.closest('button, [role="button"], div[tabindex="0"], div.html-div, a') || el) as HTMLElement
                         break
                     }
@@ -453,10 +426,11 @@ class InstagramBot {
             await storage.set("isRunning", false)
             this.active = false
             this._loopRunning = false
+            this.isSwitchingAccount = false
             return
         }
 
-        this.addLog(`Clicking @${cleanTarget} in the account switcher...`, "success")
+        this.addLog(`Clicking @${cleanTarget} in the account switcher modal...`, "success")
         this.simulateClick(targetBtn)
 
         await this.sleep(3500)
