@@ -2742,52 +2742,81 @@ function Dashboard() {
                                                         </div>
                                                     </button>
 
-                                                    {/* Accordion Content */}
+                                                    {/* Accordion Content (Table List Layout) */}
                                                     {isExpanded && (
-                                                        <div className="p-6 border-t border-slate-800/80 space-y-3">
-                                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                                {records.map((item: any) => {
-                                                                    const actionBadges: Record<string, { label: string, color: string, icon: any }> = {
-                                                                        follow: { label: "Followed", color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", icon: UserPlus },
-                                                                        unfollow: { label: "Unfollowed", color: "bg-rose-500/10 text-rose-400 border-rose-500/20", icon: UserMinus },
-                                                                        like: { label: "Liked", color: "bg-pink-500/10 text-pink-400 border-pink-500/20", icon: Heart },
-                                                                        comment: { label: "Commented", color: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20", icon: MessageSquare }
-                                                                    }
+                                                        <div className="border-t border-slate-800/80 overflow-x-auto">
+                                                            <table className="w-full text-left text-sm">
+                                                                <thead>
+                                                                    <tr className="bg-slate-950/40 border-b border-slate-800/60 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                                                                        <th className="px-6 py-4">Usuario</th>
+                                                                        <th className="px-6 py-4">Acción Realizada</th>
+                                                                        <th className="px-6 py-4">Hora</th>
+                                                                        <th className="px-6 py-4">Detalle / Origen</th>
+                                                                        <th className="px-6 py-4 text-right">Ver Perfil</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-slate-800/40">
+                                                                    {records.map((item: any) => {
+                                                                        const actionBadges: Record<string, { label: string, color: string, icon: any }> = {
+                                                                            follow: { label: "Followed", color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", icon: UserPlus },
+                                                                            unfollow: { label: "Unfollowed", color: "bg-rose-500/10 text-rose-400 border-rose-500/20", icon: UserMinus },
+                                                                            like: { label: "Liked", color: "bg-pink-500/10 text-pink-400 border-pink-500/20", icon: Heart },
+                                                                            comment: { label: "Commented", color: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20", icon: MessageSquare }
+                                                                        }
 
-                                                                    const badge = actionBadges[item.action] || { label: item.action, color: "bg-slate-800 text-slate-300 border-slate-700", icon: Activity }
-                                                                    const IconComponent = badge.icon
+                                                                        const badge = actionBadges[item.action] || { label: item.action, color: "bg-slate-800 text-slate-300 border-slate-700", icon: Activity }
+                                                                        const IconComponent = badge.icon
 
-                                                                    return (
-                                                                        <div key={item.id || `${item.timestamp}_${item.username}`} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-all flex flex-col justify-between space-y-3 group">
-                                                                            <div className="flex items-start justify-between gap-2">
-                                                                                <a
-                                                                                    href={`https://www.instagram.com/${item.username}`}
-                                                                                    target="_blank"
-                                                                                    rel="noreferrer"
-                                                                                    className="font-bold text-white text-sm hover:text-primary-400 flex items-center gap-1.5 transition-colors group-hover:translate-x-0.5 transform duration-200"
-                                                                                >
-                                                                                    @{item.username}
-                                                                                    <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                                                                </a>
-                                                                                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase border flex items-center gap-1.5 ${badge.color}`}>
-                                                                                    <IconComponent className="w-3 h-3" />
-                                                                                    {badge.label}
-                                                                                </span>
-                                                                            </div>
-
-                                                                            <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-900">
-                                                                                <span className="flex items-center gap-1 text-[11px] font-mono text-slate-400">
-                                                                                    <Clock className="w-3 h-3" />
-                                                                                    {item.timeStr || new Date(item.timestamp).toLocaleTimeString()}
-                                                                                </span>
-                                                                                <span className="text-[10px] font-medium text-slate-400 truncate max-w-[130px]" title={item.details}>
-                                                                                    {item.details || "Automated Task"}
-                                                                                </span>
-                                                                            </div>
-                                                                        </div>
-                                                                    )
-                                                                })}
-                                                            </div>
+                                                                        return (
+                                                                            <tr key={item.id || `${item.timestamp}_${item.username}`} className="hover:bg-slate-800/30 transition-colors group">
+                                                                                <td className="px-6 py-4">
+                                                                                    <div className="flex items-center gap-3">
+                                                                                        <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-black text-primary-400 group-hover:bg-primary-600 group-hover:text-white transition-all">
+                                                                                            {item.username?.[0]?.toUpperCase() || "?"}
+                                                                                        </div>
+                                                                                        <a
+                                                                                            href={item.url || `https://www.instagram.com/${item.username}`}
+                                                                                            target="_blank"
+                                                                                            rel="noreferrer"
+                                                                                            className="font-bold text-white hover:text-primary-400 flex items-center gap-1.5 transition-colors"
+                                                                                        >
+                                                                                            @{item.username}
+                                                                                            <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                                                        </a>
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-6 py-4">
+                                                                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-bold uppercase border ${badge.color}`}>
+                                                                                        <IconComponent className="w-3 h-3" />
+                                                                                        {badge.label}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="px-6 py-4 text-xs font-mono text-slate-400">
+                                                                                    <span className="flex items-center gap-1.5">
+                                                                                        <Clock className="w-3.5 h-3.5 text-slate-500" />
+                                                                                        {item.timeStr || new Date(item.timestamp).toLocaleTimeString()}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="px-6 py-4 text-xs text-slate-400">
+                                                                                    <span className="truncate max-w-[220px] block" title={item.details}>
+                                                                                        {item.details || "Automated Task"}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="px-6 py-4 text-right">
+                                                                                    <a
+                                                                                        href={item.url || `https://www.instagram.com/${item.username}`}
+                                                                                        target="_blank"
+                                                                                        rel="noreferrer"
+                                                                                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-primary-600 hover:text-white text-slate-300 text-xs font-bold transition-all border border-slate-700 hover:border-primary-500"
+                                                                                    >
+                                                                                        Perfil <ExternalLink className="w-3 h-3" />
+                                                                                    </a>
+                                                                                </td>
+                                                                            </tr>
+                                                                        )
+                                                                    })}
+                                                                </tbody>
+                                                            </table>
                                                         </div>
                                                     )}
                                                 </div>
