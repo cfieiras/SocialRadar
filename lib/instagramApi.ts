@@ -1049,3 +1049,108 @@ export async function runDeepScan(onProgress?: (count: number) => void) {
     }
 }
 
+export interface ViralPostItem {
+    id: string
+    url: string
+    shortcode: string
+    likes: number
+    comments: number
+    timestamp: number
+    username: string
+    avatarUrl: string
+    format: "reel" | "carousel" | "image"
+    viralScore: number
+}
+
+export function extractTopViralPosts(competitorDataList: any[] = []): ViralPostItem[] {
+    const allPosts: ViralPostItem[] = []
+
+    for (const comp of competitorDataList) {
+        if (!comp || !comp.latestPosts || !Array.isArray(comp.latestPosts)) continue
+
+        const posts = comp.latestPosts
+        if (posts.length === 0) continue
+
+        const avgLikes = posts.reduce((sum: number, p: any) => sum + (Number(p.likes) || 0), 0) / posts.length || 1
+        const avgComments = posts.reduce((sum: number, p: any) => sum + (Number(p.comments) || 0), 0) / posts.length || 1
+        const compAvgScore = avgLikes + (avgComments * 2) || 1
+
+        for (const p of posts) {
+            const pLikes = Number(p.likes) || 0
+            const pComments = Number(p.comments) || 0
+            const score = pLikes + (pComments * 2)
+            const multiplier = parseFloat((score / compAvgScore).toFixed(1))
+
+            let format: "reel" | "carousel" | "image" = "image"
+            const pUrl = (p.url || "").toLowerCase()
+            if (pUrl.includes('/reel/') || pUrl.includes('/reels/')) {
+                format = "reel"
+            } else if (p.isCarousel || pUrl.includes('carousel')) {
+                format = "carousel"
+            }
+
+            allPosts.push({
+                id: p.id || p.shortcode || `${comp.username}_${pLikes}_${pComments}`,
+                url: p.url || `https://www.instagram.com/p/${p.shortcode}/`,
+                shortcode: p.shortcode || "",
+                likes: pLikes,
+                comments: pComments,
+                timestamp: p.timestamp || Date.now(),
+                username: comp.username,
+                avatarUrl: comp.avatarUrl || `https://ui-avatars.com/api/?name=${comp.username}&background=0f172a&color=fff`,
+                format,
+                viralScore: multiplier
+            })
+        }
+    }
+
+    return allPosts.sort((a, b) => b.viralScore - a.viralScore).slice(0, 6)
+}
+
+export function calculateCompetitorFormatBreakdown(competitorDataList: any[] = []) {
+    let reels = { count: 0, likes: 0, comments: 0 }
+    let images = { count: 0, likes: 0, comments: 0 }
+    let carousels = { count: 0, likes: 0, comments: 0 }
+
+    for (const comp of competitorDataList) {
+        if (!comp?.latestPosts) continue
+        for (const p of comp.latestPosts) {
+            const likes = Number(p.likes) || 0
+            const comments = Number(p.comments) || 0
+            const url = (p.url || "").toLowerCase()
+
+            if (url.includes('/reel/') || url.includes('/reels/')) {
+                reels.count++
+                reels.likes += likes
+                reels.comments += comments
+            } else if (p.isCarousel) {
+                carousels.count++
+                carousels.likes += likes
+                carousels.comments += comments
+            } else {
+                images.count++
+                images.likes += likes
+                images.comments += comments
+            }
+        }
+    }
+
+    return {
+        reels: {
+            count: reels.count,
+            avgLikes: reels.count > 0 ? Math.round(reels.likes / reels.count) : 0,
+            avgComments: reels.count > 0 ? Math.round(reels.comments / reels.count) : 0
+        },
+        images: {
+            count: images.count,
+            avgLikes: images.count > 0 ? Math.round(images.likes / images.count) : 0,
+            avgComments: images.count > 0 ? Math.round(images.comments / images.count) : 0
+        },
+        carousels: {
+            count: carousels.count,
+            avgLikes: carousels.count > 0 ? Math.round(carousels.likes / carousels.count) : 0,
+            avgComments: carousels.count > 0 ? Math.round(carousels.comments / carousels.count) : 0
+        }
+    }
+}
+

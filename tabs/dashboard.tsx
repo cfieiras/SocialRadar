@@ -14,7 +14,7 @@ import {
 import "../style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
 import helpDemoVideo from "url:~assets/help/SocialRadar_demo_landscape_es.mp4"
-import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, syncAccountSettingsToSupabase, fetchAccountSettingsFromSupabase, type Unfollower } from "../lib/instagramApi"
+import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, syncAccountSettingsToSupabase, fetchAccountSettingsFromSupabase, extractTopViralPosts, calculateCompetitorFormatBreakdown, type ViralPostItem, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
 import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
@@ -1576,200 +1576,259 @@ function Dashboard() {
                         </>
                     )}
 
-                    {activeTab === "competitors" && (
-                        <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            {/* Header Section */}
-                            <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 flex items-center justify-between">
-                                <div>
-                                    <h3 className="text-3xl font-black text-white tracking-tight flex items-center gap-4">
-                                        <Users className="w-8 h-8 text-primary-500" />
-                                        Competitor Watchlist
-                                    </h3>
-                                    <p className="text-slate-400 font-medium mt-1">Add and analyze your niche competitors to steal their growth strategies.</p>
-                                    <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
-                                        <span className="relative flex h-2 w-2">
-                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-                                        </span>
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Advanced features in development</span>
+                    {activeTab === "competitors" && (() => {
+                        const topViralPosts = extractTopViralPosts(competitorsData || [])
+                        const formatBreakdown = calculateCompetitorFormatBreakdown(competitorsData || [])
+                        const totalFormatPosts = formatBreakdown.reels.count + formatBreakdown.images.count + formatBreakdown.carousels.count || 1
+
+                        return (
+                            <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                {/* Header Section */}
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-3xl font-black text-white tracking-tight flex items-center gap-4">
+                                            <Users className="w-8 h-8 text-primary-500" />
+                                            Competitor Analysis & Market Intelligence
+                                        </h3>
+                                        <p className="text-slate-400 font-medium mt-1">Head-to-head benchmarking, viral content prospecting, and format breakdown powered by 0-extra-request GraphQL interception.</p>
+                                    </div>
+                                    <div className="flex items-center gap-4 bg-slate-950 p-4 rounded-3xl border border-slate-800 focus-within:border-primary-500 transition-all">
+                                        <Search className="w-5 h-5 text-slate-500" />
+                                        <input
+                                            type="text"
+                                            placeholder="Add @username..."
+                                            className="bg-transparent outline-none text-white font-bold text-sm min-w-[250px]"
+                                            value={newCompetitor}
+                                            onChange={(e) => setNewCompetitor(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && addCompetitor(e)}
+                                            onBlur={(e) => addCompetitor(e)}
+                                        />
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-4 bg-slate-950 p-4 rounded-3xl border border-slate-800 focus-within:border-primary-500 transition-all">
-                                    <Search className="w-5 h-5 text-slate-500" />
-                                    <input
-                                        type="text"
-                                        placeholder="Add @username..."
-                                        className="bg-transparent outline-none text-white font-bold text-sm min-w-[250px]"
-                                        value={newCompetitor}
-                                        onChange={(e) => setNewCompetitor(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && addCompetitor(e)}
-                                        onBlur={(e) => addCompetitor(e)}
-                                    />
-                                </div>
-                            </div>
 
-                            {/* Competitors Grid */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                {competitors && competitors.length > 0 ? (
-                                    competitors.map((usernameTag: string) => {
-                                        const username = usernameTag.replace('@', '')
-                                        const comp = (competitorsData || []).find((c: any) => c.username === username)
+                                {/* Section 1: Head-to-Head Benchmarking */}
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-8 space-y-6">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-xl font-black text-white flex items-center gap-3">
+                                            <BarChart2 className="w-6 h-6 text-indigo-400" />
+                                            Head-to-Head Benchmarking
+                                        </h4>
+                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Live Comparison</span>
+                                    </div>
 
-                                        if (!comp) {
-                                            // Loading / Placeholder state
-                                            return (
-                                                <div key={usernameTag} className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-8 flex items-center justify-between animate-pulse">
-                                                    <div className="flex items-center gap-6">
-                                                        <div className="w-20 h-20 rounded-full bg-slate-800" />
-                                                        <div>
-                                                            <div className="h-6 w-32 bg-slate-800 rounded-lg mb-2" />
-                                                            <div className="h-4 w-24 bg-slate-700 rounded-lg" />
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left text-sm">
+                                            <thead>
+                                                <tr className="border-b border-slate-800 text-slate-500 text-[11px] font-black uppercase tracking-wider">
+                                                    <th className="pb-4">Cuenta</th>
+                                                    <th className="pb-4">Seguidores</th>
+                                                    <th className="pb-4">Posts</th>
+                                                    <th className="pb-4">Engagement Rate</th>
+                                                    <th className="pb-4">Frecuencia</th>
+                                                    <th className="pb-4">Acciones</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-800/50">
+                                                {/* My Account Row */}
+                                                <tr className="bg-primary-500/5 font-bold">
+                                                    <td className="py-4 flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-full border-2 border-primary-500 overflow-hidden">
+                                                            <img src={safeCurrentAvatar} className="w-full h-full object-cover" />
                                                         </div>
-                                                    </div>
-                                                    <div className="text-slate-600 font-bold text-xs uppercase tracking-widest">Fetching Profile...</div>
-                                                </div>
-                                            )
-                                        }
+                                                        <div>
+                                                            <p className="text-white font-black">@{userStats?.username || currentUsername} (Tu Cuenta)</p>
+                                                            <span className="text-[10px] text-primary-400 font-bold uppercase">Cuenta Principal</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-4 text-white font-black">{(userStats?.stats?.followers || 0).toLocaleString()}</td>
+                                                    <td className="py-4 text-slate-300 font-bold">{(userStats?.stats?.posts || 0).toLocaleString()}</td>
+                                                    <td className="py-4">
+                                                        <span className="px-3 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 font-black text-xs">
+                                                            {userStats?.engagementRate || "2.4"}%
+                                                        </span>
+                                                    </td>
+                                                    <td className="py-4 text-slate-400 text-xs font-semibold">Diario</td>
+                                                    <td className="py-4">
+                                                        <span className="text-xs text-slate-500 italic">Baseline</span>
+                                                    </td>
+                                                </tr>
 
-                                        const posts = comp.latestPosts || []
-                                        let postingFreq = "N/A"
-                                        if (posts.length >= 2) {
-                                            const first = posts[0].timestamp
-                                            const last = posts[posts.length - 1].timestamp
-                                            const diffHours = (first - last) / 3600
-                                            const diffDays = diffHours / 24
-                                            postingFreq = `${(diffDays / posts.length).toFixed(1)}d`
-                                        }
+                                                {/* Competitors Rows */}
+                                                {(competitorsData || []).map((comp: any) => {
+                                                    const posts = comp.latestPosts || []
+                                                    let postingFreq = "N/A"
+                                                    if (posts.length >= 2) {
+                                                        const first = posts[0].timestamp
+                                                        const last = posts[posts.length - 1].timestamp
+                                                        const diffDays = Math.max(1, ((first - last) / 86400))
+                                                        postingFreq = `${(diffDays / posts.length).toFixed(1)}d / post`
+                                                    }
+                                                    const engNum = Number(comp.engagementRate) || 0
 
-                                        return (
-                                            <div key={comp.username} className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] overflow-hidden group hover:border-primary-500/30 transition-all duration-500">
-                                                <div className="p-8">
-                                                    <div className="flex items-start justify-between mb-8">
-                                                        <div className="flex items-center gap-6">
-                                                            <div className="relative">
-                                                                <div className="w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-primary-500 to-purple-600">
-                                                                    <img
-                                                                        src={sanitizeImageUrl(comp.avatarUrl) || `https://ui-avatars.com/api/?name=${encodeURIComponent(comp.username || "user")}&background=0f172a&color=fff`}
-                                                                        className="w-full h-full rounded-full border-4 border-slate-900 object-cover"
-                                                                        alt={comp.username}
-                                                                        referrerPolicy="no-referrer"
-                                                                        onError={(e) => {
-                                                                            (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${comp.username}&background=0f172a&color=fff`
-                                                                        }}
-                                                                    />
+                                                    return (
+                                                        <tr key={comp.username} className="hover:bg-slate-800/30 transition-colors">
+                                                            <td className="py-4 flex items-center gap-3">
+                                                                <div className="w-10 h-10 rounded-full border border-slate-700 overflow-hidden">
+                                                                    <img src={sanitizeImageUrl(comp.avatarUrl) || `https://ui-avatars.com/api/?name=${comp.username}&background=0f172a&color=fff`} className="w-full h-full object-cover" />
                                                                 </div>
-                                                                {comp.isVerified && (
-                                                                    <div className="absolute -bottom-1 -right-1 bg-blue-500 rounded-full p-1 border-2 border-slate-900">
-                                                                        <CheckCircle2 className="w-3 h-3 text-white fill-current" />
-                                                                    </div>
-                                                                )}
+                                                                <div>
+                                                                    <p className="text-white font-bold">@{comp.username}</p>
+                                                                    <p className="text-[10px] text-slate-500 font-medium truncate max-w-[150px]">{comp.fullName}</p>
+                                                                </div>
+                                                            </td>
+                                                            <td className="py-4 text-slate-200 font-bold">{(Number(comp.stats?.followers) || 0).toLocaleString()}</td>
+                                                            <td className="py-4 text-slate-400 font-semibold">{(Number(comp.stats?.posts) || 0).toLocaleString()}</td>
+                                                            <td className="py-4">
+                                                                <span className={`px-3 py-1 rounded-lg font-black text-xs ${engNum >= 3.0 ? 'bg-emerald-500/10 text-emerald-400' : engNum >= 1.5 ? 'bg-amber-500/10 text-amber-400' : 'bg-slate-800 text-slate-400'}`}>
+                                                                    {engNum}%
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-4 text-slate-400 text-xs font-semibold">{postingFreq}</td>
+                                                            <td className="py-4">
+                                                                <button
+                                                                    onClick={() => {
+                                                                        const url = `https://www.instagram.com/${comp.username}/?audit=true&target=competitor&mode=deep`
+                                                                        chrome.tabs.create({ url, active: true })
+                                                                    }}
+                                                                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-primary-600 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5"
+                                                                >
+                                                                    <Zap className="w-3.5 h-3.5" />
+                                                                    Audit
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    )
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                {/* Section 2: Top Performing Content & 1-Click Prospecting */}
+                                <div className="space-y-6">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h4 className="text-2xl font-black text-white flex items-center gap-3">
+                                                <TrendingUp className="w-6 h-6 text-emerald-400" />
+                                                Contenido Viral & Prospectado en 1 Clic
+                                            </h4>
+                                            <p className="text-slate-400 text-sm font-medium">Posts con mayor rendimiento detectados en tus competidores. Prospecta sus likes y comentarios directamente.</p>
+                                        </div>
+                                    </div>
+
+                                    {topViralPosts.length > 0 ? (
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {topViralPosts.map((post: ViralPostItem, idx: number) => (
+                                                <div key={idx} className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] overflow-hidden group hover:border-emerald-500/30 transition-all flex flex-col justify-between">
+                                                    <div className="p-6 space-y-4">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-3">
+                                                                <img src={post.avatarUrl} className="w-8 h-8 rounded-full object-cover border border-slate-700" />
+                                                                <span className="text-white font-bold text-sm">@{post.username}</span>
+                                                            </div>
+                                                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-[11px] font-black">
+                                                                🔥 {post.viralScore}x Avg
+                                                            </span>
+                                                        </div>
+
+                                                        <div className="grid grid-cols-2 gap-3 text-center py-2 bg-slate-950/40 rounded-xl border border-slate-800">
+                                                            <div>
+                                                                <p className="text-[10px] uppercase font-black text-slate-500">Likes</p>
+                                                                <p className="text-white font-black text-sm">{post.likes.toLocaleString()}</p>
                                                             </div>
                                                             <div>
-                                                                <h4 className="text-xl font-black text-white">{comp.fullName || comp.username}</h4>
-                                                                <a
-                                                                    href={`https://www.instagram.com/${comp.username}/`}
-                                                                    target="_blank"
-                                                                    className="text-primary-500 font-bold text-sm tracking-tight italic hover:text-primary-400 flex items-center gap-1 group/link"
-                                                                >
-                                                                    @{comp.username}
-                                                                    <ExternalLink className="w-3 h-3 opacity-0 group-hover/link:opacity-100 transition-opacity" />
-                                                                </a>
+                                                                <p className="text-[10px] uppercase font-black text-slate-500">Comentarios</p>
+                                                                <p className="text-white font-black text-sm">{post.comments.toLocaleString()}</p>
                                                             </div>
-                                                        </div>
-                                                        <button
-                                                            onClick={() => {
-                                                                setCompetitors(competitors.filter(c => c !== `@${comp.username}`))
-                                                                setCompetitorsData((competitorsData || []).filter((c: any) => c.username !== comp.username))
-                                                            }}
-                                                            className="p-2 rounded-xl bg-slate-950 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
-                                                        >
-                                                            <Trash2 className="w-5 h-5" />
-                                                        </button>
-                                                    </div>
-
-                                                    <p className="text-slate-400 text-sm font-medium line-clamp-2 mb-8 h-10 leading-relaxed">
-                                                        {comp.bio || "No biography provided."}
-                                                    </p>
-
-                                                    <div className="grid grid-cols-3 gap-4 mb-8">
-                                                        <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800 text-center">
-                                                            <p className="text-[10px] font-black uppercase text-slate-600 mb-1">Followers</p>
-                                                            <p className="text-lg font-black text-white">{(Number(comp.stats?.followers) || 0).toLocaleString()}</p>
-                                                        </div>
-                                                        <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800 text-center">
-                                                            <p className="text-[10px] font-black uppercase text-slate-600 mb-1">Posts</p>
-                                                            <p className="text-lg font-black text-white">{(Number(comp.stats?.posts) || 0).toLocaleString()}</p>
-                                                        </div>
-                                                        <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800 text-center">
-                                                            <p className="text-[10px] font-black uppercase text-slate-600 mb-1">Engagement</p>
-                                                            <p className="text-lg font-black text-primary-400">{comp.engagementRate || 0}%</p>
                                                         </div>
                                                     </div>
 
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="flex -space-x-3">
-                                                                {(comp.latestPosts || []).slice(0, 3).map((p: any, i: number) => (
-                                                                    <div key={i} className="w-10 h-10 rounded-xl border-2 border-slate-900 overflow-hidden bg-slate-800">
-                                                                        <img src={p.url} className="w-full h-full object-cover" />
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-4">
-                                                                Freq: <span className="text-white ml-1">{postingFreq}</span>
-                                                            </p>
-                                                        </div>
+                                                    <div className="p-6 pt-0">
                                                         <button
-                                                            onClick={() => {
-                                                                const url = `https://www.instagram.com/${comp.username}/?audit=true&target=competitor&mode=deep`
-                                                                chrome.tabs.create({ url, active: true })
+                                                            onClick={async () => {
+                                                                const currentUrls = targetPosts || []
+                                                                if (!currentUrls.includes(post.url)) {
+                                                                    const updated = [...currentUrls, post.url]
+                                                                    setTargetPosts(updated)
+                                                                    setConfig({ ...config, sourcePosts: true })
+                                                                    alert(`✅ Post de @${post.username} agregado a la cola de prospectado del bot!`)
+                                                                } else {
+                                                                    alert(`ℹ️ El post ya está en la lista de objetivos.`)
+                                                                }
                                                             }}
-                                                            className="px-6 py-3 rounded-2xl bg-primary-600 text-white text-xs font-black shadow-lg shadow-primary-600/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                                                            className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
                                                         >
-                                                            <Zap className="w-4 h-4 fill-current" />
-                                                            DEEP AUDIT
+                                                            <Target className="w-4 h-4" />
+                                                            🎯 Prospectar Interacciones
                                                         </button>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        )
-                                    })
-                                ) : (
-                                    <div className="col-span-2 py-32 bg-slate-900/20 border-2 border-dashed border-slate-800 rounded-[3rem] flex flex-col items-center justify-center text-center">
-                                        <div className="p-6 rounded-full bg-slate-900 mb-6 text-slate-700">
-                                            <Users className="w-16 h-16" />
+                                            ))}
                                         </div>
-                                        <h4 className="text-xl font-black text-white mb-2">No Competitors Tracked</h4>
-                                        <p className="text-slate-500 max-w-sm font-medium">Add your first competitor using the input field above to start spying on their performance.</p>
-                                    </div>
-                                )}
+                                    ) : (
+                                        <div className="p-12 bg-slate-900/20 border border-dashed border-slate-800 rounded-[2rem] text-center">
+                                            <p className="text-slate-500 font-bold text-sm">Agrega competidores o ejecuta un audit para extraer los posts virales con mayor interacción.</p>
+                                        </div>
+                                    )}
+                                </div>
 
-                                {/* Placeholder for empty slots */}
-                                {competitors.map(username => {
-                                    const cleaned = username.replace('@', '').trim()
-                                    if (competitorsData?.find((c: any) => c.username === cleaned)) return null
-                                    return (
-                                        <div key={username} className="bg-slate-900/20 border border-dashed border-slate-800 rounded-[2.5rem] p-10 flex flex-col items-center justify-center text-center group hover:border-primary-500/30 transition-all">
-                                            <div className="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center mb-6 text-slate-700 font-black text-2xl group-hover:text-primary-500 transition-all">
-                                                {cleaned[0]?.toUpperCase() || '?'}
+                                {/* Section 3: Format Breakdown & Intelligence */}
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-8 space-y-6">
+                                    <h4 className="text-xl font-black text-white flex items-center gap-3">
+                                        <Grid className="w-6 h-6 text-purple-400" />
+                                        Desglose por Formato de Contenido
+                                    </h4>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                        {/* Reels */}
+                                        <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-sm font-black text-white flex items-center gap-2">🎬 Reels</span>
+                                                <span className="text-xs text-purple-400 font-bold">{Math.round((formatBreakdown.reels.count / totalFormatPosts) * 100)}%</span>
                                             </div>
-                                            <h4 className="text-white font-black mb-1">@{cleaned}</h4>
-                                            <button
-                                                onClick={() => {
-                                                    const url = `https://www.instagram.com/${cleaned}/?audit=true&target=competitor&mode=deep`
-                                                    chrome.tabs.create({ url, active: true })
-                                                }}
-                                                className="px-8 py-3 rounded-2xl bg-primary-600 text-white text-xs font-black shadow-lg shadow-primary-600/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
-                                            >
-                                                <Zap className="w-4 h-4" />
-                                                DEEP AUDIT
-                                            </button>
+                                            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                <div className="bg-purple-500 h-full rounded-full" style={{ width: `${Math.round((formatBreakdown.reels.count / totalFormatPosts) * 100)}%` }} />
+                                            </div>
+                                            <div className="flex justify-between text-xs text-slate-400 pt-2 font-medium">
+                                                <span>Prom. Likes: <strong className="text-white">{formatBreakdown.reels.avgLikes}</strong></span>
+                                                <span>Prom. Coms: <strong className="text-white">{formatBreakdown.reels.avgComments}</strong></span>
+                                            </div>
                                         </div>
-                                    )
-                                })}
+
+                                        {/* Single Posts */}
+                                        <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-sm font-black text-white flex items-center gap-2">📸 Posts Estáticos</span>
+                                                <span className="text-xs text-indigo-400 font-bold">{Math.round((formatBreakdown.images.count / totalFormatPosts) * 100)}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${Math.round((formatBreakdown.images.count / totalFormatPosts) * 100)}%` }} />
+                                            </div>
+                                            <div className="flex justify-between text-xs text-slate-400 pt-2 font-medium">
+                                                <span>Prom. Likes: <strong className="text-white">{formatBreakdown.images.avgLikes}</strong></span>
+                                                <span>Prom. Coms: <strong className="text-white">{formatBreakdown.images.avgComments}</strong></span>
+                                            </div>
+                                        </div>
+
+                                        {/* Carousels */}
+                                        <div className="bg-slate-950/50 p-6 rounded-2xl border border-slate-800 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-sm font-black text-white flex items-center gap-2">🖼️ Carruseles</span>
+                                                <span className="text-xs text-emerald-400 font-bold">{Math.round((formatBreakdown.carousels.count / totalFormatPosts) * 100)}%</span>
+                                            </div>
+                                            <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                                                <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${Math.round((formatBreakdown.carousels.count / totalFormatPosts) * 100)}%` }} />
+                                            </div>
+                                            <div className="flex justify-between text-xs text-slate-400 pt-2 font-medium">
+                                                <span>Prom. Likes: <strong className="text-white">{formatBreakdown.carousels.avgLikes}</strong></span>
+                                                <span>Prom. Coms: <strong className="text-white">{formatBreakdown.carousels.avgComments}</strong></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )
+                    })()}
 
                     {activeTab === "unfollow" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
