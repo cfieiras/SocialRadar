@@ -9,7 +9,7 @@ import {
     Users, Heart, MessageSquare, Settings, BarChart3,
     History, Shield, Zap, Search, Bell, ExternalLink,
     ChevronRight, ChevronDown, Calendar, Play, Pause, Database, Clock, Square,
-    CheckCircle2, Circle, UserPlus, UserMinus, Trash2, AlertTriangle, Activity, X, Radar, Send, Monitor, Moon, RefreshCw
+    CheckCircle2, Circle, UserPlus, UserMinus, Trash2, AlertTriangle, Activity, X, Radar, Send, Monitor, Moon, RefreshCw, Download
 } from "lucide-react"
 import "../style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
@@ -148,7 +148,23 @@ function Dashboard() {
     const [activeTab, setActiveTab] = useState("overview")
 
     const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
-    const currentUsername = userStats?.username || "global"
+    const [lastKnownUsername] = useStorage({ key: "lastKnownUsername", instance: storage }, "")
+    const activeDetectedUser = (userStats?.username || lastKnownUsername || "").toLowerCase()
+    
+    // Multi-Account Rotation State
+    const [multiAccounts, setMultiAccounts] = useStorage({ key: "multiAccounts", instance: storage }, [] as { username: string, password: string }[])
+    const [multiAccountEnabled, setMultiAccountEnabled] = useStorage({ key: "multiAccountEnabled", instance: storage }, false)
+    const [newMultiUsername, setNewMultiUsername] = useState("")
+    const [newMultiPassword, setNewMultiPassword] = useState("")
+
+    // Account Selector for per-account strategy management
+    const [selectedProfileUsername, setSelectedProfileUsername] = useState<string>("")
+    const availableAccounts = Array.from(new Set([
+        activeDetectedUser,
+        ...(multiAccounts || []).map(a => a.username.toLowerCase())
+    ])).filter(Boolean)
+
+    const currentUsername = (selectedProfileUsername || activeDetectedUser || (availableAccounts.length > 0 ? availableAccounts[0] : "global")).toLowerCase()
     const competitorsDataKey = `${currentUsername}_competitorsData`
 
     const [termsAccepted] = useStorage<boolean>({ key: "termsAccepted", instance: storage })
@@ -159,6 +175,7 @@ function Dashboard() {
     const [hashtags, setHashtags] = useStorage({ key: `${currentUsername}_targetHashtags`, instance: storage }, ["#digitalart"])
     const [competitors, setCompetitors] = useStorage({ key: `${currentUsername}_targetCompetitors`, instance: storage }, ["@leomessi"])
     const [targetPosts, setTargetPosts] = useStorage({ key: `${currentUsername}_targetPostUrls`, instance: storage }, [] as string[])
+    const [postInteractions, setPostInteractions] = useStorage({ key: `${currentUsername}_postInteractions`, instance: storage }, { likers: true, commenters: false })
     const [commentTemplates, setCommentTemplates] = useStorage({ key: `${currentUsername}_commentTemplates`, instance: storage }, [
         "Great post, thanks for sharing!",
         "Really solid content 👏",
@@ -170,7 +187,7 @@ function Dashboard() {
     const [newCompetitor, setNewCompetitor] = useState("")
     const [newPostUrl, setNewPostUrl] = useState("")
     const [newCommentTemplate, setNewCommentTemplate] = useState("")
-    const [logs] = useStorage({ key: `${currentUsername}_logs`, instance: storage }, [])
+    const [logs, setLogs] = useStorage({ key: `${currentUsername}_logs`, instance: storage }, [])
     const [followedUsers, setFollowedUsers] = useStorage({ key: `${currentUsername}_followedUsers`, instance: storage }, [])
     const [interactionHistory] = useStorage<any[]>({ key: `${currentUsername}_interactionHistory`, instance: storage }, [])
     const [historySearch, setHistorySearch] = useState("")
@@ -207,7 +224,6 @@ function Dashboard() {
         if (lastSeenVersion !== undefined && lastSeenVersion !== "" && lastSeenVersion !== currentVersion) {
             setShowReleaseNotes(true)
         } else if (lastSeenVersion === "") {
-            // First time or fresh install - mark as seen but dont show notes (they saw onboarding)
             setLastSeenVersion(currentVersion)
         }
     }, [lastSeenVersion, currentVersion])
@@ -445,7 +461,8 @@ function Dashboard() {
 
     const addTag = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && newTag.trim()) {
-            setHashtags([...hashtags, newTag.startsWith("#") ? newTag : `#${newTag}`])
+            const formatted = newTag.startsWith("#") ? newTag : `#${newTag}`
+            setHashtags([...(hashtags || []), formatted])
             setNewTag("")
         }
     }
@@ -461,7 +478,7 @@ function Dashboard() {
             const username = fixed.replace('@', '')
 
             if (!competitors.includes(fixed)) {
-                setCompetitors([...competitors, fixed])
+                setCompetitors([...(competitors || []), fixed])
                 setNewCompetitor("")
 
                 // Background fetch for the new competitor
@@ -529,7 +546,7 @@ function Dashboard() {
             return
         }
         if (!targetPosts.includes(normalized)) {
-            setTargetPosts([normalized, ...targetPosts].slice(0, 100))
+            setTargetPosts([normalized, ...(targetPosts || [])].slice(0, 100))
         }
         setNewPostUrl("")
     }
@@ -851,7 +868,8 @@ function Dashboard() {
                         { id: "overview", label: "Dashboard", icon: BarChart3 },
                         { id: "competitors", label: "Competitor Analysis", icon: Users, beta: true },
                         { id: "targeting", label: "Strategy & Source", icon: Search },
-                        { id: "unfollow", label: "Unfollow Tracker", icon: UserPlus }, // New Tab
+                        { id: "multiaccount", label: "Multi-Account", icon: RefreshCw, beta: true },
+                        { id: "unfollow", label: "Unfollow Tracker", icon: UserPlus },
                         { id: "history", label: "Historial de Interacciones", icon: Activity },
                         { id: "settings", label: "Settings", icon: Settings },
                         { id: "database", label: "Audience Database", icon: History },
@@ -916,6 +934,7 @@ function Dashboard() {
                             {activeTab === 'overview' && 'System Analytics'}
                             {activeTab === 'competitors' && 'Market Intelligence'}
                             {activeTab === 'targeting' && 'Operation Strategy'}
+                            {activeTab === 'multiaccount' && 'Multi-Account Rotation Engine'}
                             {activeTab === 'unfollow' && 'Churn Analysis'}
                             {activeTab === 'history' && 'Historial de Interacciones'}
                             {activeTab === 'settings' && 'Latency Control'}
@@ -953,9 +972,41 @@ function Dashboard() {
                                         }
                                     }
 
+                                    const actualUser = currentUsername !== "global" ? currentUsername : (lastKnownUsername || "global")
                                     await storage.set("sessionLikes", 0)
                                     await storage.set("sessionFollows", 0)
                                     await storage.set("sessionUnfollows", 0)
+                                    await storage.set(`${actualUser}_postTargetQueue`, [])
+
+                                    // Auto-save pending post URL if user forgot to press Enter
+                                    let currentTargetUrl = newPostUrl.trim()
+                                    if (currentTargetUrl && (currentTargetUrl.includes('/p/') || currentTargetUrl.includes('/reels/') || currentTargetUrl.includes('/reel/'))) {
+                                        if (!currentTargetUrl.startsWith('http')) currentTargetUrl = 'https://' + currentTargetUrl
+                                        const currentPosts = targetPosts || []
+                                        if (!currentPosts.includes(currentTargetUrl)) {
+                                            const updatedPosts = [...currentPosts, currentTargetUrl]
+                                            setTargetPosts(updatedPosts)
+                                            await storage.set(`${currentUsername}_targetPostUrls`, updatedPosts)
+                                        }
+                                        setNewPostUrl("")
+                                    }
+                                    
+                                    // Remove 'post:' entries from ALL processedHistory to guarantee re-scraping
+                                    const allData = await chrome.storage.local.get(null)
+                                    for (const key of Object.keys(allData)) {
+                                        if (key.endsWith("_processedHistory")) {
+                                            let history = allData[key]
+                                            try {
+                                                if (typeof history === 'string') history = JSON.parse(history)
+                                            } catch(e){}
+                                            
+                                            if (Array.isArray(history)) {
+                                                const cleaned = history.filter(h => typeof h === 'string' && !h.startsWith('post:'))
+                                                await chrome.storage.local.set({ [key]: JSON.stringify(cleaned) })
+                                            }
+                                        }
+                                    }
+                                    
                                     window.open(targetUrl, "_blank")
                                 }
                                 setIsRunning(nextState)
@@ -1436,7 +1487,38 @@ function Dashboard() {
 
                             <div className="grid grid-cols-12 gap-8">
                                 <div className="col-span-12 bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
-                                    <h3 className="text-xl font-black tracking-tight mb-8">Activity Log</h3>
+                                    <div className="flex justify-between items-center mb-8">
+                                        <h3 className="text-xl font-black tracking-tight">Activity Log</h3>
+                                        <div className="flex items-center gap-3">
+                                            <button 
+                                                onClick={async () => {
+                                                    setLogs([])
+                                                    await storage.set(`${currentUsername}_logs`, [])
+                                                }}
+                                                className="flex items-center gap-2 px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-sm font-bold rounded-xl transition-colors border border-rose-500/20"
+                                                title="Clear activity log"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                                Clear Logs
+                                            </button>
+                                            <button 
+                                                onClick={() => {
+                                                    const logText = (logs || []).map((l: any) => `[${l.time}] ${l.type ? l.type.toUpperCase() : 'INFO'}: ${l.msg}`).join('\n');
+                                                    const blob = new Blob([logText], { type: "text/plain" });
+                                                    const url = URL.createObjectURL(blob);
+                                                    const a = document.createElement('a');
+                                                    a.href = url;
+                                                    a.download = `socialradar_logs_${currentUsername}_${new Date().toISOString().split('T')[0]}.txt`;
+                                                    a.click();
+                                                    URL.revokeObjectURL(url);
+                                                }}
+                                                className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-bold rounded-xl transition-colors"
+                                            >
+                                                <Download className="w-4 h-4" />
+                                                Export Logs
+                                            </button>
+                                        </div>
+                                    </div>
                                     <div className="space-y-4 font-mono text-[11px] overflow-y-auto max-h-[400px] pr-4 custom-scrollbar">
                                         {(logs || []).length > 0 ? (logs || []).map((log: any, i: number) => (
                                             <div key={i} className="flex gap-4 items-start group">
@@ -1727,6 +1809,33 @@ function Dashboard() {
 
                     {activeTab === "targeting" && (
                         <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                            {/* Per-Account Strategy Selector Banner */}
+                            {availableAccounts.length > 0 && (
+                                <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 backdrop-blur-xl">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                                            <Users className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-bold text-white uppercase tracking-wider">Account Strategy Profile</h4>
+                                            <p className="text-xs text-slate-400 font-medium">Select an Instagram profile to configure its independent strategy and targets.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-xs font-bold text-slate-400">Editing Strategy For:</span>
+                                        <select
+                                            value={currentUsername}
+                                            onChange={(e) => setSelectedProfileUsername(e.target.value)}
+                                            className="bg-slate-950 text-amber-400 font-bold text-sm px-4 py-2.5 rounded-xl border border-amber-500/40 focus:outline-none focus:border-amber-400 cursor-pointer shadow-lg shadow-amber-500/5"
+                                        >
+                                            {availableAccounts.map(acc => (
+                                                <option key={acc} value={acc}>@{acc}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
                                     <h3 className="text-lg font-black tracking-tight mb-8 uppercase text-slate-400 tracking-[0.2em]">Active Action Modules</h3>
@@ -1754,6 +1863,21 @@ function Dashboard() {
                                                 {item.label.includes("(Dev)") && <span className="absolute top-2 right-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-500 text-[8px] font-bold rounded uppercase">In Dev</span>}
                                             </button>
                                         ))}
+
+                                        <button
+                                            onClick={() => setMultiAccountEnabled(!multiAccountEnabled)}
+                                            className={`w-full flex items-center justify-between p-6 rounded-2xl transition-all border ${multiAccountEnabled
+                                                ? "bg-slate-900 border-amber-500/50 shadow-lg shadow-amber-500/5"
+                                                : "bg-slate-950/50 border-slate-800 opacity-50 grayscale"
+                                                }`}
+                                        >
+                                            <div className="flex items-center gap-4">
+                                                <Users className={`w-5 h-5 ${multiAccountEnabled ? 'text-amber-400' : 'text-slate-500'}`} />
+                                                <span className="font-bold text-white">Multi-Account Rotation</span>
+                                                <BetaBadge className="ml-2 border-amber-500/30 bg-amber-500/10 text-amber-400" />
+                                            </div>
+                                            {multiAccountEnabled ? <CheckCircle2 className="w-6 h-6 text-amber-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
+                                        </button>
                                     </div>
                                 </div>
 
@@ -1862,6 +1986,30 @@ function Dashboard() {
                                                 onKeyDown={addTargetPost}
                                             />
                                             <p className="text-xs text-slate-500 mt-3">When enabled, bot can start missions directly from these posts.</p>
+                                            
+                                            <div className="mt-6 space-y-3 border-t border-slate-800 pt-6">
+                                                <h4 className="text-sm font-bold text-slate-300">Interact With:</h4>
+                                                <div className="flex gap-4">
+                                                    <label className="flex items-center gap-3 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={postInteractions.likers}
+                                                            onChange={(e) => setPostInteractions({ ...postInteractions, likers: e.target.checked })}
+                                                            className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-rose-500 focus:ring-rose-500 focus:ring-offset-slate-950"
+                                                        />
+                                                        <span className="text-sm font-medium text-slate-400">Likers</span>
+                                                    </label>
+                                                    <label className="flex items-center gap-3 cursor-pointer">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={postInteractions.commenters}
+                                                            onChange={(e) => setPostInteractions({ ...postInteractions, commenters: e.target.checked })}
+                                                            className="w-5 h-5 rounded border-slate-700 bg-slate-900 text-rose-500 focus:ring-rose-500 focus:ring-offset-slate-950"
+                                                        />
+                                                        <span className="text-sm font-medium text-slate-400">Commenters</span>
+                                                    </label>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -1869,10 +2017,191 @@ function Dashboard() {
                         </div>
                     )}
 
+                    {activeTab === "multiaccount" && (
+                        <div className="space-y-12 pb-24 max-w-6xl">
+                            {/* Hero Card */}
+                            <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 relative overflow-hidden">
+                                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500" />
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-8">
+                                    <div className="flex items-center gap-6">
+                                        <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+                                            <RefreshCw className="w-8 h-8" />
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-3 mb-1">
+                                                <h3 className="text-2xl font-black text-white tracking-tight">Multi-Account Rotation Engine</h3>
+                                                <BetaBadge className="border-amber-500/30 bg-amber-500/10 text-amber-400" />
+                                            </div>
+                                            <p className="text-slate-400 text-sm font-medium max-w-xl">
+                                                Automatically cycle between multiple Instagram accounts linked under Meta Accounts Center when daily action limits (Likes, Follows) are reached.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setMultiAccountEnabled(!multiAccountEnabled)}
+                                        className={`flex items-center gap-3 px-8 py-4 rounded-2xl font-bold transition-all text-sm shrink-0 border ${multiAccountEnabled
+                                            ? "bg-amber-500 text-slate-950 border-amber-400 shadow-xl shadow-amber-500/20 hover:bg-amber-400"
+                                            : "bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700 hover:text-white"
+                                            }`}
+                                    >
+                                        <RefreshCw className={`w-5 h-5 ${multiAccountEnabled ? 'animate-spin' : ''}`} />
+                                        {multiAccountEnabled ? "ROTATION ENABLED" : "ROTATION DISABLED"}
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-slate-800/60">
+                                    <div className="bg-slate-950/40 border border-slate-800/50 rounded-2xl p-5 flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                                            <Zap className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block">Current Active Context</span>
+                                            <span className="text-sm font-bold text-white">@{currentUsername}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-950/40 border border-slate-800/50 rounded-2xl p-5 flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                                            <CheckCircle2 className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block">Account Switch Trigger</span>
+                                            <span className="text-sm font-bold text-white">Per-Session Limit Reached</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-slate-950/40 border border-slate-800/50 rounded-2xl p-5 flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                                            <Shield className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <span className="text-[10px] font-bold tracking-widest text-slate-500 uppercase block">Switch Mode</span>
+                                            <span className="text-sm font-bold text-white">Meta UI Switcher (No Re-auth)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Account Manager Card */}
+                            <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 space-y-6">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                                            <Users className="w-5 h-5" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xl font-bold text-white">Target Accounts Queue</h4>
+                                            <p className="text-slate-400 text-xs font-medium">Add linked Instagram usernames to include in the rotation order.</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4 pt-2">
+                                    <div className="flex gap-4">
+                                        <input
+                                            type="text"
+                                            placeholder="Instagram Username (e.g. jdoe)"
+                                            value={newMultiUsername}
+                                            onChange={(e) => setNewMultiUsername(e.target.value.toLowerCase().trim().replace('@', ''))}
+                                            className="flex-1 bg-slate-950/50 border border-slate-800 rounded-xl px-5 py-3.5 text-white placeholder-slate-600 focus:outline-none focus:border-amber-500/50 transition-colors text-sm font-medium"
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                if (newMultiUsername) {
+                                                    const newAcc = { username: newMultiUsername, password: "" }
+                                                    setMultiAccounts([...(multiAccounts || []), newAcc])
+                                                    setNewMultiUsername("")
+                                                }
+                                            }}
+                                            className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-6 rounded-xl transition-colors text-sm flex items-center gap-2"
+                                        >
+                                            <UserPlus className="w-4 h-4" />
+                                            Add Account
+                                        </button>
+                                    </div>
+
+                                    {multiAccounts && multiAccounts.length > 0 ? (
+                                        <div className="grid gap-3 mt-6">
+                                            {multiAccounts.map((acc, idx) => (
+                                                <div key={idx} className="flex items-center justify-between bg-slate-950/40 border border-slate-800/50 rounded-2xl p-4">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center font-bold text-amber-400 text-xs">
+                                                            #{idx + 1}
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-white font-bold">@{acc.username}</div>
+                                                            <div className="text-xs text-amber-500/70 font-medium">Linked Account (Meta UI Switcher)</div>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            setMultiAccounts(multiAccounts.filter((_, i) => i !== idx))
+                                                        }}
+                                                        className="p-2 hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 rounded-lg transition-colors"
+                                                        title="Remove account"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-slate-600 text-center font-medium italic py-8 border border-dashed border-slate-800/80 rounded-2xl text-xs">
+                                            No accounts in rotation queue. Add linked profiles above.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Workflow & Setup Grid */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 space-y-6">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                                            <RefreshCw className="w-5 h-5" />
+                                        </div>
+                                        <h4 className="text-xl font-bold text-white">How Multi-Account Works</h4>
+                                    </div>
+                                    <div className="space-y-4 text-sm text-slate-400 font-medium leading-relaxed">
+                                        <div className="flex gap-4 items-start">
+                                            <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">1</span>
+                                            <p><strong className="text-white">Action Limit Reached:</strong> When your active account reaches the configured Like or Follow limit (e.g., 100 Likes), the engine triggers an automatic switch.</p>
+                                        </div>
+                                        <div className="flex gap-4 items-start">
+                                            <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">2</span>
+                                            <p><strong className="text-white">Automated UI Navigation:</strong> SocialRadar opens Instagram's sidebar menu, selects <em>"Switch Accounts" / "Cambiar de cuenta"</em>, and clicks the next linked profile in your list.</p>
+                                        </div>
+                                        <div className="flex gap-4 items-start">
+                                            <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center text-xs shrink-0 mt-0.5">3</span>
+                                            <p><strong className="text-white">Seamless Sequence Resume:</strong> Once logged into the next profile, SocialRadar automatically performs its routine audit and resumes the growth strategy without manual password input.</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 space-y-6">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                                            <Users className="w-5 h-5" />
+                                        </div>
+                                        <h4 className="text-xl font-bold text-white">Prerequisites & Setup</h4>
+                                    </div>
+                                    <div className="space-y-4 text-sm text-slate-400 font-medium leading-relaxed">
+                                        <div className="p-4 rounded-2xl bg-slate-950/40 border border-slate-800/50">
+                                            <span className="font-bold text-white block mb-1">🔗 Link Accounts in Instagram</span>
+                                            Make sure all accounts you wish to rotate are already logged into Instagram and linked under Meta Accounts Center (visible under the <em>"Cambiar de cuenta"</em> popup).
+                                        </div>
+                                        <div className="p-4 rounded-2xl bg-slate-950/40 border border-slate-800/50">
+                                            <span className="font-bold text-white block mb-1">⚙️ Independent Profile Settings</span>
+                                            Each Instagram profile maintains its own independent logs, statistics, hashtags, and limit settings in SocialRadar.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {activeTab === "settings" && (
                         <div className="space-y-12 pb-24 max-w-6xl">
-
-
                             {/* Overlay & Maintenance Section */}
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-indigo-500/30 transition-all group">

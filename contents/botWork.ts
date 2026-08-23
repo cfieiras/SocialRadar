@@ -74,6 +74,11 @@ class InstagramBot {
     private interactionHistory: InteractionRecord[] = []
     private processedHistory: string[] = []
 
+    private postInteractions: any = { likers: true, commenters: false }
+    private postTargetQueue: string[] = []
+    private expectingLikersModal: boolean = false
+    private nextAccountToRotate: string = ""
+
     private activeUsername: string = "global"
 
     private pKey(key: string): string {
@@ -84,7 +89,7 @@ class InstagramBot {
             "lastSessionReport", "followerHistory", "sessionLikes",
             "sessionFollows", "sessionUnfollows", "processedHistory",
             "targetPostUrls", "commentTemplates", "healthMetrics", "sessionComments",
-            "sessionDayMarker"
+            "sessionDayMarker", "postInteractions", "postTargetQueue"
         ]
         if (accountSpecific.includes(key)) {
             return `${this.activeUsername}_${key}`
@@ -260,6 +265,25 @@ class InstagramBot {
     private async stopBot(reason: string) {
         this.isInternalStop = true
         await this.generateReport(reason)
+
+        const multiAccountEnabled = await storage.get<boolean>("multiAccountEnabled")
+        if (multiAccountEnabled && (reason.toLowerCase().includes("limit") || reason.toLowerCase().includes("daily") || reason.toLowerCase().includes("no active tasks") || reason.toLowerCase().includes("empty"))) {
+            const multiAccounts = await storage.get<{username: string, password: string}[]>("multiAccounts") || []
+            if (multiAccounts.length > 0) {
+                const currentIndex = multiAccounts.findIndex(a => a.username.toLowerCase() === this.activeUsername.toLowerCase())
+                let nextAccount = ""
+                if (currentIndex !== -1 && currentIndex < multiAccounts.length - 1) {
+                    nextAccount = multiAccounts[currentIndex + 1].username
+                } else if (multiAccounts.length > 0 && multiAccounts[0].username.toLowerCase() !== this.activeUsername.toLowerCase()) {
+                    nextAccount = multiAccounts[0].username
+                }
+                if (nextAccount) {
+                    this.addLog(`🔄 Multi-Account Rotation: Switching context to @${nextAccount}...`, "warning")
+                    this.nextAccountToRotate = nextAccount
+                }
+            }
+        }
+
         await storage.set("isRunning", false)
         this.active = false
         this._loopRunning = false
@@ -353,7 +377,7 @@ class InstagramBot {
 
             await this.syncActiveUsername()
 
-            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedInteractions, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments, savedSessionDayMarker] = await Promise.all([
+            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedInteractions, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments, savedSessionDayMarker, savedPostInteractions, savedPostTargetQueue] = await Promise.all([
                 storage.get(this.pKey("botConfig")),
                 storage.get(this.pKey("delays")),
                 storage.get<BotStats>(this.pKey("stats")),
@@ -370,7 +394,9 @@ class InstagramBot {
                 storage.get<number>(this.pKey("sessionFollows")),
                 storage.get<number>(this.pKey("sessionUnfollows")),
                 storage.get<number>(this.pKey("sessionComments")),
-                storage.get<string>(this.pKey("sessionDayMarker"))
+                storage.get<string>(this.pKey("sessionDayMarker")),
+                storage.get<any>(this.pKey("postInteractions")),
+                storage.get<string[]>(this.pKey("postTargetQueue"))
             ])
 
             if (savedConfig) this.config = savedConfig
@@ -379,6 +405,8 @@ class InstagramBot {
             if (savedLogs) this.logs = savedLogs
             if (savedFollows) this.followedUsers = savedFollows
             if (savedInteractions) this.interactionHistory = savedInteractions
+            if (savedPostInteractions) this.postInteractions = savedPostInteractions
+            if (savedPostTargetQueue) this.postTargetQueue = savedPostTargetQueue
             const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
             if (remoteAudience.length > 0) {
                 this.followedUsers = remoteAudience
@@ -413,11 +441,35 @@ class InstagramBot {
         } catch (e) { }
     }
 
+    private async logActiveConfiguration() {
+        try {
+            const actions: string[] = []
+            if (this.config.likeEnabled) actions.push(`Like (Limit: ${this.delayConfig.sessionLikeLimit || 100})`)
+            if (this.config.followEnabled) actions.push(`Follow (Limit: ${this.delayConfig.sessionFollowLimit || 100})`)
+            if (this.config.unfollowEnabled) actions.push('Unfollow')
+            if (this.config.dmEnabled) actions.push(`Comment (Limit: ${this.delayConfig.sessionCommentLimit || 25})`)
+
+            const sources: string[] = []
+            if (this.config.sourceHashtags) sources.push('Hashtags')
+            if (this.config.sourceCompetitors) sources.push('Competitors')
+            if (this.config.sourcePosts) sources.push('Specific Posts')
+
+            const multiAccountEnabled = await storage.get<boolean>("multiAccountEnabled")
+
+            const actionsStr = actions.length > 0 ? actions.join(', ') : 'None'
+            const sourcesStr = sources.length > 0 ? sources.join(', ') : 'None'
+            const rotationStr = multiAccountEnabled ? 'ENABLED 🔄' : 'DISABLED'
+
+            this.addLog(`📋 Active Config: Actions [${actionsStr}] | Sources [${sourcesStr}] | Multi-Account Rotation: ${rotationStr}`, "info")
+        } catch (e) {}
+    }
+
     async listenToToggles() {
         const isRunning = await storage.get<boolean>("isRunning")
         this.active = !!isRunning
         if (this.active) {
             this.addLog("Bot initialized and running", "success")
+            await this.logActiveConfiguration()
             this.createStatusOverlay()
             this.runLoop()
         }
@@ -475,13 +527,15 @@ class InstagramBot {
     }
 
     private async syncDataForAccount() {
-        const [conf, del, savedStats, savedLogs, savedFollows, savedInteractions] = await Promise.all([
+        const [conf, del, savedStats, savedLogs, savedFollows, savedInteractions, savedPI, savedPQ] = await Promise.all([
             storage.get<any>(this.pKey("botConfig")),
             storage.get<any>(this.pKey("delays")),
             storage.get<BotStats>(this.pKey("stats")),
             storage.get<LogEntry[]>(this.pKey("logs")),
             storage.get<FollowedUser[]>(this.pKey("followedUsers")),
-            storage.get<InteractionRecord[]>(this.pKey("interactionHistory"))
+            storage.get<InteractionRecord[]>(this.pKey("interactionHistory")),
+            storage.get<any>(this.pKey("postInteractions")),
+            storage.get<string[]>(this.pKey("postTargetQueue"))
         ])
         if (conf) this.config = conf
         if (del) this.delayConfig = del
@@ -489,6 +543,8 @@ class InstagramBot {
         this.logs = savedLogs || []
         this.followedUsers = savedFollows || []
         if (savedInteractions) this.interactionHistory = savedInteractions
+        if (savedPI) this.postInteractions = savedPI
+        if (savedPQ) this.postTargetQueue = savedPQ
         const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
         if (remoteAudience.length > 0) {
             this.followedUsers = remoteAudience
