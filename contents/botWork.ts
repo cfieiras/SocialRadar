@@ -582,6 +582,7 @@ class InstagramBot {
 
             this.interactionHistory = [record, ...(this.interactionHistory || [])].slice(0, 10000)
             await storage.set(this.pKey("interactionHistory"), this.interactionHistory)
+            this.addLog(`Recorded ${action.toUpperCase()} for @${cleanUser}`, "info")
             if (url) await this.addToHistory(url)
         } catch (e) {
             console.warn("SocialRadar: Error recording interaction", e)
@@ -1187,39 +1188,55 @@ class InstagramBot {
             const flwLink = Array.from(document.querySelectorAll('a')).find(a => a.href.includes('/followers/'))
             if (flwLink) { flwLink.click(); await this.sleep(5000) }
             return
-        } else {
-            const cleanUrl = window.location.href.split('?')[0].replace(/\/$/, "").toLowerCase()
-            const inHistory = this.processedHistory.includes(cleanUrl)
-            const sessionDone = this.sessionEngagedProfiles.has(cleanUrl)
+        }
 
-            if (sessionDone) {
-                window.history.back(); await this.sleep(4000)
-            } else if (inHistory) {
-                const post = document.querySelector('article a[href*="/p/"], main a[href*="/p/"]')
-                if (post) { (post as HTMLElement).click(); await this.sleep(4000) }
-                else {
-                    if (this.config.followEnabled) {
-                        const prevUnfollowed = this.interactionHistory.find(r => r.username.toLowerCase() === user.toLowerCase() && r.action === 'unfollow')
-                        if (prevUnfollowed) {
-                            this.addLog(`Anti-Refollow Guard: Skipping @${user} (previously unfollowed on ${prevUnfollowed.dateStr})`, "info")
-                        } else {
-                            const btn = Array.from(document.querySelectorAll('header button, main header button')).find(b => {
-                                const t = b.textContent?.toLowerCase() || ""
-                                return t === 'follow' || t === 'seguir'
-                            })
-                            if (btn) {
-                                (btn as HTMLElement).click()
-                                this.stats.follows++
-                                await storage.set(this.pKey("stats"), this.stats)
-                                await this.saveFollowedTarget(user, cleanUrl)
-                            }
-                        }
-                    }
-                    this.sessionEngagedProfiles.add(cleanUrl)
-                    window.history.back(); await this.sleep(4000)
+        const cleanUrl = window.location.href.split('?')[0].replace(/\/$/, "").toLowerCase()
+        const sessionDone = this.sessionEngagedProfiles.has(cleanUrl)
+
+        if (sessionDone) {
+            await this.navigateToNextTarget()
+            return
+        }
+
+        await this.addToHistory(cleanUrl)
+        this.sessionEngagedProfiles.add(cleanUrl)
+
+        // 1. Follow action on profile if enabled
+        if (this.config.followEnabled) {
+            const prevUnfollowed = (this.interactionHistory || []).find(r => r.username.toLowerCase() === user.toLowerCase() && r.action === 'unfollow')
+            if (prevUnfollowed) {
+                this.addLog(`Anti-Refollow Guard: Skipping @${user} (previously unfollowed on ${prevUnfollowed.dateStr})`, "info")
+            } else {
+                const followKeywords = ['follow', 'seguir']
+                const btn = getVisibleProfileActionButtons().find((b) => {
+                    const { text, label, title } = getButtonSignals(b)
+                    const combined = `${text} ${label} ${title}`
+                    return followKeywords.some(keyword => combined.includes(keyword))
+                })
+                if (btn) {
+                    (btn as HTMLElement).click()
+                    this.stats.follows++
+                    this.sessionFollows++
+                    await storage.set(this.pKey("stats"), this.stats)
+                    await storage.set(this.pKey("sessionFollows"), this.sessionFollows)
+                    await this.saveFollowedTarget(user, cleanUrl)
+                    this.addLog(`>>> SUCCESS: Followed @${user}`, "success")
                 }
             }
         }
+
+        // 2. Open post for Like / Comment if enabled
+        if (this.config.likeEnabled || this.config.dmEnabled) {
+            const post = document.querySelector('article a[href*="/p/"], main a[href*="/p/"]') as HTMLElement
+            if (post) {
+                this.addLog(`Opening latest post for @${user}...`, "info")
+                post.click()
+                await this.sleep(4000)
+                return
+            }
+        }
+
+        await this.navigateToNextTarget()
     }
 
     async handleHashtagPage() {
