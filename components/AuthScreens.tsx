@@ -14,6 +14,18 @@ const REPO_NAME = "SocialRadar"
 const PASSWORD_RESET_REDIRECT_URL = "https://socialradar-beta.vercel.app/reset-password"
 const CLOSED_BETA_ACCESS_EMAIL = "cristianfieiras@gmail.com"
 
+const isNewerVersion = (remote: string, current: string): boolean => {
+    const r = remote.split('.').map(Number)
+    const c = current.split('.').map(Number)
+    for (let i = 0; i < Math.max(r.length, c.length); i++) {
+        const rv = r[i] || 0
+        const cv = c[i] || 0
+        if (rv > cv) return true
+        if (rv < cv) return false
+    }
+    return false
+}
+
 export function UpdateBanner() {
     const [updateAvailable, setUpdateAvailable] = useState<string | null>(null)
 
@@ -22,15 +34,21 @@ export function UpdateBanner() {
             try {
                 const manifest = chrome.runtime.getManifest()
                 const currentVersion = manifest.version
+                let remoteVersion = ""
 
-                // Fetch remote version from Gist
-                const res = await fetch(`https://gist.githubusercontent.com/cfieiras/a74789aead58df67812f31099ffe7e02/raw/social-radar-version.json?t=${Date.now()}`)
-                if (!res.ok) return
-                const remotePkg = await res.json()
-                const remoteVersion = remotePkg.version
+                const res = await fetch(`https://raw.githubusercontent.com/cfieiras/SocialRadar/main/package.json?t=${Date.now()}`)
+                if (res.ok) {
+                    const data = await res.json()
+                    remoteVersion = data.version || ""
+                } else {
+                    const gistRes = await fetch(`https://gist.githubusercontent.com/cfieiras/a74789aead58df67812f31099ffe7e02/raw/social-radar-version.json?t=${Date.now()}`)
+                    if (gistRes.ok) {
+                        const gistData = await gistRes.json()
+                        remoteVersion = gistData.version || ""
+                    }
+                }
 
-                if (remoteVersion !== currentVersion) {
-                    // Simple string comparison, ideally use semver
+                if (remoteVersion && isNewerVersion(remoteVersion, currentVersion)) {
                     setUpdateAvailable(remoteVersion)
                 }
             } catch (e) {
