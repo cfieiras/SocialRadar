@@ -169,9 +169,9 @@ function Dashboard() {
     }, [currentVersion])
     const [activeTab, setActiveTab] = useState("overview")
 
-    const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
+    const [globalUserStats, setGlobalUserStats] = useStorage<any>({ key: "currentUserStats", instance: storage }, null)
     const [lastKnownUsername] = useStorage({ key: "lastKnownUsername", instance: storage }, "")
-    const activeDetectedUser = (userStats?.username || lastKnownUsername || "").toLowerCase()
+    const activeDetectedUser = (globalUserStats?.username || lastKnownUsername || "").toLowerCase()
     
     // Multi-Account Rotation State
     const [multiAccounts, setMultiAccounts] = useStorage({ key: "multiAccounts", instance: storage }, [] as { username: string, password: string }[])
@@ -188,6 +188,9 @@ function Dashboard() {
 
     const currentUsername = (selectedProfileUsername || activeDetectedUser || (availableAccounts.length > 0 ? availableAccounts[0] : "global")).toLowerCase()
     const competitorsDataKey = `${currentUsername}_competitorsData`
+
+    const [accountUserStats, setAccountUserStats] = useStorage<any>({ key: `${currentUsername}_currentUserStats`, instance: storage }, null)
+    const userStats = accountUserStats || globalUserStats
 
     const [termsAccepted] = useStorage<boolean>({ key: "termsAccepted", instance: storage })
     const [session, setSession] = useStorage({ key: "session", instance: storage }, { isLoggedIn: false, user: null, isPremium: false })
@@ -383,6 +386,11 @@ function Dashboard() {
                 alert("No se pudo refrescar el perfil. Revisá que estés logueado en Instagram e intentá de nuevo.")
                 return
             }
+
+            setGlobalUserStats(freshProfile)
+            setAccountUserStats(freshProfile)
+            await storage.set(`${freshProfile.username.toLowerCase()}_currentUserStats`, freshProfile)
+            await storage.set("currentUserStats", freshProfile)
 
             await loadHistory(freshProfile.username)
             await loadUnfollowers(freshProfile.username)
