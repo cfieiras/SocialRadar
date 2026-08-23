@@ -267,7 +267,14 @@ class InstagramBot {
         await this.generateReport(reason)
 
         const multiAccountEnabled = await storage.get<boolean>("multiAccountEnabled")
-        if (multiAccountEnabled && (reason.toLowerCase().includes("limit") || reason.toLowerCase().includes("daily") || reason.toLowerCase().includes("no active tasks") || reason.toLowerCase().includes("empty"))) {
+        if (multiAccountEnabled && (
+            reason.toLowerCase().includes("limit") ||
+            reason.toLowerCase().includes("daily") ||
+            reason.toLowerCase().includes("no active tasks") ||
+            reason.toLowerCase().includes("empty") ||
+            reason.toLowerCase().includes("complete") ||
+            reason.toLowerCase().includes("finished")
+        )) {
             const multiAccounts = await storage.get<{username: string, password: string}[]>("multiAccounts") || []
             if (multiAccounts.length > 0) {
                 const currentIndex = multiAccounts.findIndex(a => a.username.toLowerCase() === this.activeUsername.toLowerCase())
@@ -277,9 +284,17 @@ class InstagramBot {
                 } else if (multiAccounts.length > 0 && multiAccounts[0].username.toLowerCase() !== this.activeUsername.toLowerCase()) {
                     nextAccount = multiAccounts[0].username
                 }
-                if (nextAccount) {
-                    this.addLog(`🔄 Multi-Account Rotation: Switching context to @${nextAccount}...`, "warning")
-                    this.nextAccountToRotate = nextAccount
+
+                if (nextAccount && nextAccount.toLowerCase() !== this.activeUsername.toLowerCase()) {
+                    this.addLog(`🔄 Multi-Account Rotation: Session ended (@${this.activeUsername}). Rotating to @${nextAccount}...`, "warning")
+                    this.active = false
+                    this._loopRunning = false
+
+                    // Ensure isRunning stays true so the bot auto-starts on the next account!
+                    await storage.set("isRunning", true)
+                    await this.sleep(3000)
+                    await this.executeAccountSwitch(nextAccount)
+                    return
                 }
             }
         }
@@ -287,6 +302,166 @@ class InstagramBot {
         await storage.set("isRunning", false)
         this.active = false
         this._loopRunning = false
+    }
+
+    private simulateClick(el: HTMLElement) {
+        try {
+            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
+            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }))
+            el.click()
+        } catch (e) {
+            el.click()
+        }
+    }
+
+    private async executeAccountSwitch(nextUsername: string) {
+        this.addLog(`Starting UI account switch to @${nextUsername}...`, "info")
+
+        if (window.location.pathname !== '/') {
+            window.location.href = `/?switch_account=${nextUsername}`
+            return
+        }
+
+        await this.sleep(2000)
+        const cleanTarget = nextUsername.replace("@", "").trim().toLowerCase()
+
+        let switchBtn: HTMLElement | null = null
+        const findSwitchBtn = () => {
+            const matches = Array.from(document.querySelectorAll('span, div, a, button')).filter(el => {
+                const text = el.textContent?.trim().toLowerCase() || ""
+                return text === "cambiar de cuenta" || text === "cambiar cuenta" || text === "switch account" || text === "switch accounts" ||
+                       text.includes("cambiar de cuenta") || text.includes("switch account")
+            })
+            if (matches.length > 0) {
+                matches.sort((a, b) => (a.textContent?.trim().length || 0) - (b.textContent?.trim().length || 0))
+                const best = matches[0]
+                return (best.closest('a, [role="button"], div[tabindex="0"], div.html-div') || best) as HTMLElement
+            }
+            return null
+        }
+
+        switchBtn = findSwitchBtn()
+
+        if (!switchBtn) {
+            const findMoreSvg = () => {
+                const svgs = Array.from(document.querySelectorAll('svg'))
+                for (const svg of svgs) {
+                    const label = (svg.getAttribute('aria-label') || '').toLowerCase()
+                    const title = (svg.querySelector('title')?.textContent || '').toLowerCase()
+                    if (label.includes('configuraci') || label.includes('settings') || label.includes('más') || label.includes('more') || label.includes('menú') ||
+                        title.includes('configuraci') || title.includes('settings') || title.includes('más') || title.includes('more') || title.includes('menú')) {
+                        return svg
+                    }
+                }
+                return null
+            }
+
+            const moreSvg = findMoreSvg()
+            let moreClicked = false
+            if (moreSvg) {
+                const btn = (moreSvg.closest('a, [role="button"], div[tabindex="0"], div.html-div') || moreSvg.parentElement) as HTMLElement
+                if (btn) {
+                    this.addLog("Clicking 'More' / 'Configuración' menu...", "info")
+                    this.simulateClick(btn)
+                    moreClicked = true
+                }
+            }
+
+            if (!moreClicked) {
+                const elements = Array.from(document.querySelectorAll('span, div')).filter(s => {
+                    const txt = s.textContent?.trim().toLowerCase() || ""
+                    return txt === 'more' || txt === 'más' || txt === 'opciones' || txt === 'menú' || txt === 'configuración'
+                })
+                if (elements.length > 0) {
+                    const btn = (elements[elements.length - 1].closest('a, [role="button"], div[tabindex="0"], div.html-div') || elements[elements.length - 1]) as HTMLElement
+                    if (btn) {
+                        this.addLog("Clicking 'More' menu fallback...", "info")
+                        this.simulateClick(btn)
+                        moreClicked = true
+                    }
+                }
+            }
+
+            if (!moreClicked) {
+                this.addLog("Failed to find 'More' / 'Configuración' menu for account switching.", "error")
+                await storage.set("isRunning", false)
+                this.active = false
+                this._loopRunning = false
+                return
+            }
+
+            for (let i = 0; i < 10; i++) {
+                await this.sleep(500)
+                switchBtn = findSwitchBtn()
+                if (switchBtn) break
+            }
+        }
+
+        if (!switchBtn) {
+            this.addLog("Failed to find 'Switch accounts' option in popover menu.", "error")
+            await storage.set("isRunning", false)
+            this.active = false
+            this._loopRunning = false
+            return
+        }
+
+        this.addLog("Clicking 'Switch accounts' option...", "info")
+        this.simulateClick(switchBtn)
+        await this.sleep(2000)
+
+        let targetBtn: HTMLElement | null = null
+        let modalTextDump: string[] = []
+
+        for (let i = 0; i < 20; i++) {
+            await this.sleep(500)
+            const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'))
+            const searchRoot = dialogs.length > 0 ? dialogs[dialogs.length - 1] : document
+            const allElements = Array.from(searchRoot.querySelectorAll('span, div, button, a, img'))
+            modalTextDump = []
+
+            for (const el of allElements) {
+                const rawTxt = el.textContent?.trim() || ""
+                if (rawTxt && rawTxt.length < 40 && !modalTextDump.includes(rawTxt)) {
+                    modalTextDump.push(rawTxt)
+                }
+
+                if (el.tagName === 'IMG') {
+                    const alt = (el.getAttribute('alt') || '').toLowerCase()
+                    if (alt.includes(cleanTarget)) {
+                        targetBtn = (el.closest('button, [role="button"], div[tabindex="0"], div.html-div, a') || el) as HTMLElement
+                        break
+                    }
+                }
+                if (el.tagName === 'A') {
+                    const href = (el.getAttribute('href') || '').toLowerCase()
+                    if (href.includes(`/${cleanTarget}`)) {
+                        targetBtn = el as HTMLElement
+                        break
+                    }
+                }
+                const txt = rawTxt.toLowerCase()
+                if (txt) {
+                    const tokens = txt.split(/[\s\n\r@:]+/).map(w => w.toLowerCase())
+                    if (tokens.includes(cleanTarget) || txt === cleanTarget || txt === `@${cleanTarget}`) {
+                        targetBtn = (el.closest('button, [role="button"], div[tabindex="0"], div.html-div, a') || el) as HTMLElement
+                        break
+                    }
+                }
+            }
+            if (targetBtn) break
+        }
+
+        if (!targetBtn) {
+            const visibleText = modalTextDump.slice(0, 10).join(" | ")
+            this.addLog(`Account @${cleanTarget} not found in Switcher list. Visible items: [${visibleText}]`, "error")
+            await storage.set("isRunning", false)
+            this.active = false
+            this._loopRunning = false
+            return
+        }
+
+        this.addLog(`Clicking @${cleanTarget} in the account switcher...`, "success")
+        this.simulateClick(targetBtn)
     }
 
     private async generateReport(reason: string) {
@@ -432,10 +607,16 @@ class InstagramBot {
             // --- FORCED AUDIT CHECK ---
             // If the URL has ?audit=true or ?start_audit=true, run the analysis even if the bot is not "Running"
             const params = new URLSearchParams(window.location.search)
+            const switchTarget = params.get('switch_account')
+            if (switchTarget) {
+                this.addLog(`🔄 Multi-Account Switch requested via URL: Target @${switchTarget}`, "info")
+                setTimeout(() => this.executeAccountSwitch(switchTarget), 2500)
+            }
+
             const isAudit = params.get('audit') === 'true' || params.get('start_audit') === 'true'
             if (isAudit) {
                 this.showAuditOverlay()
-                this.addLog("âš¡ Manual Audit Triggered. Intercepting Network...", "info")
+                this.addLog("⚡ Manual Audit Triggered. Intercepting Network...", "info")
                 setTimeout(() => this.analyzeOwnProfile(), 2000)
             }
         } catch (e) { }
