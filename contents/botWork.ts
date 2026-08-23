@@ -610,6 +610,10 @@ class InstagramBot {
                     const currentActive = await detectActiveUsername()
                     if (currentActive && currentActive.toLowerCase() === targetUser) {
                         this.addLog(`✅ Multi-Account Switch VERIFIED: Successfully running on @${currentActive}!`, "success")
+                        await storage.set("lastNavTime", 0)
+                        if (this.active) {
+                            await this.navigateToNextTarget()
+                        }
                     } else {
                         this.addLog(`❌ Multi-Account Switch FAILED: Expected active session @${targetUser}, but Instagram active account is @${currentActive || 'unknown'}. Please make sure @${targetUser} is logged into Instagram Web.`, "error")
                         await storage.set("isRunning", false)
