@@ -78,6 +78,7 @@ class InstagramBot {
     private postTargetQueue: string[] = []
     private expectingLikersModal: boolean = false
     private nextAccountToRotate: string = ""
+    private isSwitchingAccount: boolean = false
 
     private activeUsername: string = "global"
 
@@ -287,12 +288,13 @@ class InstagramBot {
 
                 if (nextAccount && nextAccount.toLowerCase() !== this.activeUsername.toLowerCase()) {
                     this.addLog(`🔄 Multi-Account Rotation: Session ended (@${this.activeUsername}). Rotating to @${nextAccount}...`, "warning")
+                    this.isSwitchingAccount = true
                     this.active = false
                     this._loopRunning = false
 
                     // Ensure isRunning stays true so the bot auto-starts on the next account!
                     await storage.set("isRunning", true)
-                    await this.sleep(3000)
+                    await this.sleep(2000)
                     await this.executeAccountSwitch(nextAccount)
                     return
                 }
@@ -609,8 +611,9 @@ class InstagramBot {
             const params = new URLSearchParams(window.location.search)
             const switchTarget = params.get('switch_account')
             if (switchTarget) {
+                this.isSwitchingAccount = true
                 this.addLog(`🔄 Multi-Account Switch requested via URL: Target @${switchTarget}`, "info")
-                setTimeout(() => this.executeAccountSwitch(switchTarget), 2500)
+                setTimeout(() => this.executeAccountSwitch(switchTarget), 1500)
             }
 
             const isAudit = params.get('audit') === 'true' || params.get('start_audit') === 'true'
@@ -646,9 +649,16 @@ class InstagramBot {
     }
 
     async listenToToggles() {
+        const params = new URLSearchParams(window.location.search)
+        const isSwitchingAccount = params.has('switch_account') || this.isSwitchingAccount
+
         const isRunning = await storage.get<boolean>("isRunning")
         this.active = !!isRunning
         if (this.active) {
+            if (isSwitchingAccount) {
+                this.addLog("🔄 Multi-Account Rotation in progress: Pausing mission until account switch completes...", "info")
+                return
+            }
             this.addLog("Bot initialized and running", "success")
             await this.logActiveConfiguration()
             this.createStatusOverlay()
