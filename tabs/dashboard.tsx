@@ -1752,7 +1752,7 @@ function Dashboard() {
                                                                     const updated = [...currentUrls, post.url]
                                                                     setTargetPosts(updated)
                                                                     setConfig({ ...config, sourcePosts: true })
-                                                                    alert(`✅ Post de @${post.username} agregado a la cola de prospectado del bot!`)
+                                                                    alert(`✅ Post de @${post.username} agregado a los objetivos del bot!`)
                                                                 } else {
                                                                     alert(`ℹ️ El post ya está en la lista de objetivos.`)
                                                                 }
@@ -1760,7 +1760,7 @@ function Dashboard() {
                                                             className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
                                                         >
                                                             <Target className="w-4 h-4" />
-                                                            🎯 Prospectar Interacciones
+                                                            🎯 Extraer Audiencia
                                                         </button>
                                                     </div>
                                                 </div>
