@@ -230,6 +230,7 @@ function Dashboard() {
     const [showScoreModal, setShowScoreModal] = useState(false)
     const [showEngagementModal, setShowEngagementModal] = useState(false)
     const [showHelpVideoModal, setShowHelpVideoModal] = useState(false)
+    const [selectedCompetitorDetail, setSelectedCompetitorDetail] = useState<any | null>(null)
 
     const [chartReady, setChartReady] = useState(false)
     const [showFeedbackModal, setShowFeedbackModal] = useState(false)
@@ -1668,12 +1669,12 @@ function Dashboard() {
 
                                                     return (
                                                         <tr key={comp.username} className="hover:bg-slate-800/30 transition-colors">
-                                                            <td className="py-4 flex items-center gap-3">
+                                                            <td className="py-4 flex items-center gap-3 cursor-pointer" onClick={() => setSelectedCompetitorDetail(comp)}>
                                                                 <div className="w-10 h-10 rounded-full border border-slate-700 overflow-hidden">
                                                                     <img src={sanitizeImageUrl(comp.avatarUrl) || `https://ui-avatars.com/api/?name=${comp.username}&background=0f172a&color=fff`} className="w-full h-full object-cover" />
                                                                 </div>
                                                                 <div>
-                                                                    <p className="text-white font-bold">@{comp.username}</p>
+                                                                    <p className="text-white font-bold hover:text-primary-400 transition-colors">@{comp.username}</p>
                                                                     <p className="text-[10px] text-slate-500 font-medium truncate max-w-[150px]">{comp.fullName}</p>
                                                                 </div>
                                                             </td>
@@ -1685,16 +1686,22 @@ function Dashboard() {
                                                                 </span>
                                                             </td>
                                                             <td className="py-4 text-slate-400 text-xs font-semibold">{postingFreq}</td>
-                                                            <td className="py-4">
+                                                            <td className="py-4 flex items-center gap-2">
+                                                                <button
+                                                                    onClick={() => setSelectedCompetitorDetail(comp)}
+                                                                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition-all"
+                                                                >
+                                                                    Ver detalles
+                                                                </button>
                                                                 <button
                                                                     onClick={() => {
-                                                                        const url = `https://www.instagram.com/${comp.username}/?audit=true&target=competitor&mode=deep`
-                                                                        chrome.tabs.create({ url, active: true })
+                                                                        setCompetitors(competitors.filter(c => c !== `@${comp.username}`))
+                                                                        setCompetitorsData((competitorsData || []).filter((c: any) => c.username !== comp.username))
                                                                     }}
-                                                                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-primary-600 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5"
+                                                                    className="p-2 rounded-xl bg-slate-950 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 transition-all"
+                                                                    title="Eliminar Competidor"
                                                                 >
-                                                                    <Zap className="w-3.5 h-3.5" />
-                                                                    Audit
+                                                                    <Trash2 className="w-4 h-4" />
                                                                 </button>
                                                             </td>
                                                         </tr>
@@ -1705,15 +1712,15 @@ function Dashboard() {
                                     </div>
                                 </div>
 
-                                {/* Section 2: Top Performing Content & 1-Click Prospecting */}
+                                {/* Section 2: Top Performing Content & 1-Click Targeting */}
                                 <div className="space-y-6">
                                     <div className="flex items-center justify-between">
                                         <div>
                                             <h4 className="text-2xl font-black text-white flex items-center gap-3">
                                                 <TrendingUp className="w-6 h-6 text-emerald-400" />
-                                                Contenido Viral & Prospectado en 1 Clic
+                                                Contenido Viral de la Competencia
                                             </h4>
-                                            <p className="text-slate-400 text-sm font-medium">Posts con mayor rendimiento detectados en tus competidores. Prospecta sus likes y comentarios directamente.</p>
+                                            <p className="text-slate-400 text-sm font-medium">Posts con mayor rendimiento en tu nicho. Haz clic en "Apuntar a este Post" para que el bot interactúe con sus usuarios.</p>
                                         </div>
                                     </div>
 
@@ -1721,25 +1728,47 @@ function Dashboard() {
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                             {topViralPosts.map((post: ViralPostItem, idx: number) => (
                                                 <div key={idx} className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] overflow-hidden group hover:border-emerald-500/30 transition-all flex flex-col justify-between">
-                                                    <div className="p-6 space-y-4">
-                                                        <div className="flex items-center justify-between">
-                                                            <div className="flex items-center gap-3">
-                                                                <img src={post.avatarUrl} className="w-8 h-8 rounded-full object-cover border border-slate-700" />
-                                                                <span className="text-white font-bold text-sm">@{post.username}</span>
+                                                    <div className="space-y-4">
+                                                        {/* Post Image Thumbnail */}
+                                                        <div className="relative h-44 w-full bg-slate-950 overflow-hidden">
+                                                            <img
+                                                                src={post.url}
+                                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                                                alt={`Post de @${post.username}`}
+                                                                onError={(e) => {
+                                                                    (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${post.username}&background=0f172a&color=fff`
+                                                                }}
+                                                            />
+                                                            <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[11px] font-black flex items-center gap-2 border border-slate-700">
+                                                                <img src={post.avatarUrl} className="w-4 h-4 rounded-full" />
+                                                                <span>@{post.username}</span>
                                                             </div>
-                                                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 text-[11px] font-black">
-                                                                🔥 {post.viralScore}x Avg
-                                                            </span>
+                                                            <div className="absolute top-3 right-3 flex items-center gap-2">
+                                                                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/90 backdrop-blur-md text-slate-950 text-[11px] font-black shadow-lg">
+                                                                    🔥 {post.viralScore}x Avg
+                                                                </span>
+                                                                <a
+                                                                    href={post.url}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-white backdrop-blur-md border border-slate-700 transition-colors"
+                                                                    title="Ver post en Instagram"
+                                                                >
+                                                                    <ExternalLink className="w-3.5 h-3.5" />
+                                                                </a>
+                                                            </div>
                                                         </div>
 
-                                                        <div className="grid grid-cols-2 gap-3 text-center py-2 bg-slate-950/40 rounded-xl border border-slate-800">
-                                                            <div>
-                                                                <p className="text-[10px] uppercase font-black text-slate-500">Likes</p>
-                                                                <p className="text-white font-black text-sm">{post.likes.toLocaleString()}</p>
-                                                            </div>
-                                                            <div>
-                                                                <p className="text-[10px] uppercase font-black text-slate-500">Comentarios</p>
-                                                                <p className="text-white font-black text-sm">{post.comments.toLocaleString()}</p>
+                                                        <div className="p-6 pt-0 space-y-4">
+                                                            <div className="grid grid-cols-2 gap-3 text-center py-2 bg-slate-950/40 rounded-xl border border-slate-800">
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase font-black text-slate-500">Likes</p>
+                                                                    <p className="text-white font-black text-sm">{post.likes.toLocaleString()}</p>
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-[10px] uppercase font-black text-slate-500">Comentarios</p>
+                                                                    <p className="text-white font-black text-sm">{post.comments.toLocaleString()}</p>
+                                                                </div>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -1760,7 +1789,7 @@ function Dashboard() {
                                                             className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
                                                         >
                                                             <Target className="w-4 h-4" />
-                                                            🎯 Extraer Audiencia
+                                                            🎯 Apuntar a este Post
                                                         </button>
                                                     </div>
                                                 </div>
@@ -3379,6 +3408,99 @@ function Dashboard() {
                                         className="px-12 py-5 rounded-2xl bg-slate-800 text-white font-black text-xs uppercase tracking-[0.2em] hover:bg-primary-600 hover:shadow-2xl hover:shadow-primary-600/20 transition-all active:scale-95 border border-slate-700 hover:border-primary-500"
                                     >
                                         Let's Go
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Competitor Detail Modal */}
+                {selectedCompetitorDetail && (
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-8 backdrop-blur-xl bg-black/60 animate-in fade-in duration-300">
+                        <div className="bg-slate-900 border border-slate-800 w-full max-w-3xl rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+                            <div className="p-8 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+                                <div className="flex items-center gap-6">
+                                    <div className="w-16 h-16 rounded-full border-2 border-primary-500 overflow-hidden">
+                                        <img src={sanitizeImageUrl(selectedCompetitorDetail.avatarUrl) || `https://ui-avatars.com/api/?name=${selectedCompetitorDetail.username}&background=0f172a&color=fff`} className="w-full h-full object-cover" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-2xl font-black text-white flex items-center gap-2">
+                                            {selectedCompetitorDetail.fullName || selectedCompetitorDetail.username}
+                                            {selectedCompetitorDetail.isVerified && <CheckCircle2 className="w-5 h-5 text-blue-500 fill-current" />}
+                                        </h3>
+                                        <a href={`https://www.instagram.com/${selectedCompetitorDetail.username}/`} target="_blank" rel="noreferrer" className="text-primary-500 font-bold text-sm hover:underline flex items-center gap-1">
+                                            @{selectedCompetitorDetail.username} <ExternalLink className="w-3.5 h-3.5" />
+                                        </a>
+                                    </div>
+                                </div>
+                                <button onClick={() => setSelectedCompetitorDetail(null)} className="p-3 rounded-2xl bg-slate-800 text-slate-400 hover:text-white transition-all">
+                                    <X className="w-6 h-6" />
+                                </button>
+                            </div>
+
+                            <div className="p-8 space-y-6 max-h-[75vh] overflow-y-auto custom-scrollbar">
+                                {selectedCompetitorDetail.bio && (
+                                    <p className="text-slate-300 text-sm font-medium bg-slate-950/40 p-4 rounded-2xl border border-slate-800">
+                                        {selectedCompetitorDetail.bio}
+                                    </p>
+                                )}
+
+                                {/* Metrics Grid */}
+                                <div className="grid grid-cols-3 gap-4">
+                                    <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-center">
+                                        <p className="text-[10px] font-black uppercase text-slate-500">Seguidores</p>
+                                        <p className="text-xl font-black text-white">{(Number(selectedCompetitorDetail.stats?.followers) || 0).toLocaleString()}</p>
+                                    </div>
+                                    <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-center">
+                                        <p className="text-[10px] font-black uppercase text-slate-500">Publicaciones</p>
+                                        <p className="text-xl font-black text-white">{(Number(selectedCompetitorDetail.stats?.posts) || 0).toLocaleString()}</p>
+                                    </div>
+                                    <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 text-center">
+                                        <p className="text-[10px] font-black uppercase text-slate-500">Engagement</p>
+                                        <p className="text-xl font-black text-emerald-400">{selectedCompetitorDetail.engagementRate || 0}%</p>
+                                    </div>
+                                </div>
+
+                                {/* Posts List */}
+                                <div>
+                                    <h4 className="text-xs font-black uppercase text-slate-500 tracking-wider mb-4">Últimas Publicaciones</h4>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        {(selectedCompetitorDetail.latestPosts || []).map((p: any, idx: number) => (
+                                            <a key={idx} href={p.url || `https://www.instagram.com/p/${p.shortcode}/`} target="_blank" rel="noreferrer" className="group bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 hover:border-primary-500/50 transition-all">
+                                                <div className="h-32 bg-slate-900 overflow-hidden">
+                                                    <img src={p.url} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                                                </div>
+                                                <div className="p-3 flex justify-between text-xs text-slate-400 font-bold">
+                                                    <span>❤️ {p.likes || 0}</span>
+                                                    <span>💬 {p.comments || 0}</span>
+                                                </div>
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Actions */}
+                                <div className="flex justify-between items-center pt-4 border-t border-slate-800">
+                                    <button
+                                        onClick={() => {
+                                            setCompetitors(competitors.filter(c => c !== `@${selectedCompetitorDetail.username}`))
+                                            setCompetitorsData((competitorsData || []).filter((c: any) => c.username !== selectedCompetitorDetail.username))
+                                            setSelectedCompetitorDetail(null)
+                                        }}
+                                        className="px-6 py-3 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-black text-xs transition-colors flex items-center gap-2"
+                                    >
+                                        <Trash2 className="w-4 h-4" /> Eliminar Competidor
+                                    </button>
+
+                                    <button
+                                        onClick={() => {
+                                            const url = `https://www.instagram.com/${selectedCompetitorDetail.username}/?audit=true&target=competitor&mode=deep`
+                                            chrome.tabs.create({ url, active: true })
+                                        }}
+                                        className="px-8 py-3 rounded-2xl bg-primary-600 hover:bg-primary-500 text-white font-black text-xs shadow-lg shadow-primary-600/20 transition-all flex items-center gap-2"
+                                    >
+                                        <Zap className="w-4 h-4 fill-current" /> DEEP AUDIT
                                     </button>
                                 </div>
                             </div>

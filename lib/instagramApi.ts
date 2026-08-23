@@ -690,9 +690,9 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
             avatarUrl: extractBestAvatarUrl(user, avatarUrl || existingProfile?.avatarUrl || ""),
             bio: user.biography,
             stats: {
-                posts: user.edge_owner_to_timeline_media?.count || 0,
-                followers: user.edge_followed_by?.count || 0,
-                following: user.edge_follow?.count || 0
+                posts: Number(user.edge_owner_to_timeline_media?.count ?? user.edge_felix_combined_post_uploads?.count ?? user.media_count ?? user.posts_count ?? 0),
+                followers: Number(user.edge_followed_by?.count ?? user.follower_count ?? user.followers_count ?? 0),
+                following: Number(user.edge_follow?.count ?? user.following_count ?? 0)
             },
             isVerified: user.is_verified || false,
             timestamp: Date.now(),
