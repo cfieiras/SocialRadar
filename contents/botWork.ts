@@ -1048,19 +1048,6 @@ class InstagramBot {
         if (this.config.unfollowEnabled && isFollowedTarget) {
             this.addLog(`Processing Unfollow: @${user}...`, "info")
 
-            if (this.config.onlyDeadAccountUnfollow) {
-                const isDead = await this.isDeadAccountFromDom(Number(this.delayConfig.deadAccountDays || 45))
-                if (isDead === false) {
-                    this.addLog(`Skipping @${user}: account still active (dead-account mode).`, "info")
-                    this.sessionEngagedProfiles.add(window.location.href.split('?')[0].replace(/\/$/, "").toLowerCase())
-                    return "DONE"
-                }
-                if (isDead === null) {
-                    this.addLog(`Skipping @${user}: couldn't verify inactivity safely.`, "warning")
-                    return "DONE"
-                }
-            }
-
             const getVisibleProfileActionButtons = () => {
                 const selectors = [
                     'header button',

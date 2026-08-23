@@ -2563,29 +2563,6 @@ function Dashboard() {
                                         />
                                     </div>
                                 )}
-
-                                <div className="mt-8 bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-amber-500/30 transition-all group">
-                                    <div className="flex items-center justify-between mb-6">
-                                        <div>
-                                            <h3 className="text-sm font-black text-white uppercase tracking-[0.2em] mb-2">Dead Accounts Cleanup</h3>
-                                            <p className="text-xs text-slate-500">Only unfollow accounts with no recent activity.</p>
-                                        </div>
-                                        <BetaBadge className="mr-4" />
-                                        <button
-                                            onClick={() => setConfig({ ...config, onlyDeadAccountUnfollow: !config?.onlyDeadAccountUnfollow })}
-                                            className={`px-5 py-2 rounded-xl text-xs font-black transition-all ${config?.onlyDeadAccountUnfollow ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-400"}`}
-                                        >
-                                            {config?.onlyDeadAccountUnfollow ? "ENABLED" : "DISABLED"}
-                                        </button>
-                                    </div>
-                                    <label className="text-[10px] text-slate-600 font-black uppercase tracking-widest block mb-3 pl-1">Dead if no activity in X days</label>
-                                    <input
-                                        type="number"
-                                        value={delays?.deadAccountDays || 45}
-                                        onChange={(e) => setDelays({ ...delays, deadAccountDays: parseInt(e.target.value) || 0 })}
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-black text-lg focus:border-amber-500 outline-none transition-all shadow-inner"
-                                    />
-                                </div>
                             </div>
                         </div>
                     )}
