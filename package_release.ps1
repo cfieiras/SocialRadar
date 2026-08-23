@@ -1,11 +1,11 @@
-$version = "1.2.1"
+$version = "1.2.6"
 $appName = "SocialRadar"
 $buildDirName = "chrome-mv3-prod"
 $targetName = "$appName-v$version"
 $zipName = "$targetName.zip"
 
 Write-Host "Building project..."
-npm run build
+npx plasmo build --target=chrome-mv3
 
 # Find where the build went
 $possiblePaths = @(

@@ -1,4 +1,4 @@
-﻿import type { PlasmoCSConfig } from "plasmo"
+import type { PlasmoCSConfig } from "plasmo"
 import { Storage } from "@plasmohq/storage"
 import { detectActiveUsername, extractBestAvatarUrl, fetchAudienceDatabaseFromSupabase, storeCurrentUserProfile, syncAudienceDatabaseToSupabase } from "../lib/instagramApi"
 
@@ -36,6 +36,17 @@ export interface LastSessionReport {
     stopReason: string
 }
 
+export interface InteractionRecord {
+    id: string
+    username: string
+    action: "follow" | "unfollow" | "like" | "comment"
+    timestamp: number
+    dateStr: string
+    timeStr: string
+    url?: string
+    details?: string
+}
+
 interface FollowedUser {
     username: string
     url: string
@@ -60,6 +71,7 @@ class InstagramBot {
     private stats: BotStats = { follows: 0, likes: 0, dms: 0, unfollows: 0 }
     private logs: LogEntry[] = []
     private followedUsers: FollowedUser[] = []
+    private interactionHistory: InteractionRecord[] = []
     private processedHistory: string[] = []
 
     private activeUsername: string = "global"
@@ -67,7 +79,7 @@ class InstagramBot {
     private pKey(key: string): string {
         // Only prefix account-specific data
         const accountSpecific = [
-            "botConfig", "delays", "stats", "logs", "followedUsers",
+            "botConfig", "delays", "stats", "logs", "followedUsers", "interactionHistory",
             "targetHashtags", "targetCompetitors", "competitorsData",
             "lastSessionReport", "followerHistory", "sessionLikes",
             "sessionFollows", "sessionUnfollows", "processedHistory",
@@ -341,12 +353,13 @@ class InstagramBot {
 
             await this.syncActiveUsername()
 
-            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments, savedSessionDayMarker] = await Promise.all([
+            const [savedConfig, savedDelays, savedStats, savedLogs, savedFollows, savedInteractions, savedHistory, savedHashtags, savedCompetitors, savedPostUrls, savedCommentTemplates, savedStartTime, sLikes, sFollows, sUnfollows, sComments, savedSessionDayMarker] = await Promise.all([
                 storage.get(this.pKey("botConfig")),
                 storage.get(this.pKey("delays")),
                 storage.get<BotStats>(this.pKey("stats")),
                 storage.get<LogEntry[]>(this.pKey("logs")),
                 storage.get<FollowedUser[]>(this.pKey("followedUsers")),
+                storage.get<InteractionRecord[]>(this.pKey("interactionHistory")),
                 storage.get<string[]>(this.pKey("processedHistory")),
                 storage.get<string[]>(this.pKey("targetHashtags")),
                 storage.get<string[]>(this.pKey("targetCompetitors")),
@@ -365,6 +378,7 @@ class InstagramBot {
             if (savedStats) this.stats = { ...this.stats, ...savedStats }
             if (savedLogs) this.logs = savedLogs
             if (savedFollows) this.followedUsers = savedFollows
+            if (savedInteractions) this.interactionHistory = savedInteractions
             const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
             if (remoteAudience.length > 0) {
                 this.followedUsers = remoteAudience
@@ -461,18 +475,20 @@ class InstagramBot {
     }
 
     private async syncDataForAccount() {
-        const [conf, del, savedStats, savedLogs, savedFollows] = await Promise.all([
+        const [conf, del, savedStats, savedLogs, savedFollows, savedInteractions] = await Promise.all([
             storage.get<any>(this.pKey("botConfig")),
             storage.get<any>(this.pKey("delays")),
             storage.get<BotStats>(this.pKey("stats")),
             storage.get<LogEntry[]>(this.pKey("logs")),
-            storage.get<FollowedUser[]>(this.pKey("followedUsers"))
+            storage.get<FollowedUser[]>(this.pKey("followedUsers")),
+            storage.get<InteractionRecord[]>(this.pKey("interactionHistory"))
         ])
         if (conf) this.config = conf
         if (del) this.delayConfig = del
         this.stats = savedStats ? { follows: 0, likes: 0, dms: 0, unfollows: 0, ...savedStats } : { follows: 0, likes: 0, dms: 0, unfollows: 0 }
         this.logs = savedLogs || []
         this.followedUsers = savedFollows || []
+        if (savedInteractions) this.interactionHistory = savedInteractions
         const remoteAudience = await fetchAudienceDatabaseFromSupabase(this.activeUsername)
         if (remoteAudience.length > 0) {
             this.followedUsers = remoteAudience
@@ -486,6 +502,33 @@ class InstagramBot {
             if (this.config?.overlayEnabled !== false) {
                 this.createStatusOverlay()
             }
+        }
+    }
+
+    private async recordInteraction(username: string, action: "follow" | "unfollow" | "like" | "comment", url?: string, details?: string) {
+        if (!username || username.trim() === "") return
+        try {
+            const cleanUser = username.trim().replace(/^@/, '')
+            const now = new Date()
+            const dateStr = now.toISOString().split('T')[0] // YYYY-MM-DD for grouping
+            const timeStr = now.toLocaleTimeString()
+
+            const record: InteractionRecord = {
+                id: `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                username: cleanUser,
+                action,
+                timestamp: Date.now(),
+                dateStr,
+                timeStr,
+                url: url ? url.split('?')[0].replace(/\/$/, "").toLowerCase() : undefined,
+                details
+            }
+
+            this.interactionHistory = [record, ...(this.interactionHistory || [])].slice(0, 10000)
+            await storage.set(this.pKey("interactionHistory"), this.interactionHistory)
+            if (url) await this.addToHistory(url)
+        } catch (e) {
+            console.warn("SocialRadar: Error recording interaction", e)
         }
     }
 
@@ -555,7 +598,7 @@ class InstagramBot {
             await storage.set(this.pKey("followedUsers"), this.followedUsers)
             void syncAudienceDatabaseToSupabase(this.activeUsername, this.followedUsers)
             this.addLog(`Capturing Audience: @${username}`, "info")
-            await this.addToHistory(url)
+            await this.recordInteraction(username, "follow", url, "Smart Follow Target")
             this.currentSessionActions++
         } catch (e) { }
     }
@@ -1042,6 +1085,7 @@ class InstagramBot {
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
                     await storage.set(this.pKey("followedUsers"), this.followedUsers)
                     void syncAudienceDatabaseToSupabase(this.activeUsername, this.followedUsers)
+                    await this.recordInteraction(user, "unfollow", window.location.href, "Auto-Unfollow Clean")
                     this.addLog(`>>> SUCCESS: @${user} unfollowed.`, "success")
                     await this.randomSleep('unfollow')
                     return "DONE"
@@ -1063,6 +1107,7 @@ class InstagramBot {
                     this.followedUsers = this.followedUsers.filter(u => u.username.toLowerCase() !== user)
                     await storage.set(this.pKey("followedUsers"), this.followedUsers)
                     void syncAudienceDatabaseToSupabase(this.activeUsername, this.followedUsers)
+                    await this.recordInteraction(user, "unfollow", window.location.href, "Already Unfollowed")
                     this.addLog(`Already unfollowed @${user}. Removing from DB.`, "success")
                     return "DONE"
                 }
@@ -1098,15 +1143,20 @@ class InstagramBot {
                 if (post) { (post as HTMLElement).click(); await this.sleep(4000) }
                 else {
                     if (this.config.followEnabled) {
-                        const btn = Array.from(document.querySelectorAll('header button, main header button')).find(b => {
-                            const t = b.textContent?.toLowerCase() || ""
-                            return t === 'follow' || t === 'seguir'
-                        })
-                        if (btn) {
-                            (btn as HTMLElement).click()
-                            this.stats.follows++
-                            await storage.set(this.pKey("stats"), this.stats)
-                            await this.saveFollowedTarget(user, cleanUrl)
+                        const prevUnfollowed = this.interactionHistory.find(r => r.username.toLowerCase() === user.toLowerCase() && r.action === 'unfollow')
+                        if (prevUnfollowed) {
+                            this.addLog(`Anti-Refollow Guard: Skipping @${user} (previously unfollowed on ${prevUnfollowed.dateStr})`, "info")
+                        } else {
+                            const btn = Array.from(document.querySelectorAll('header button, main header button')).find(b => {
+                                const t = b.textContent?.toLowerCase() || ""
+                                return t === 'follow' || t === 'seguir'
+                            })
+                            if (btn) {
+                                (btn as HTMLElement).click()
+                                this.stats.follows++
+                                await storage.set(this.pKey("stats"), this.stats)
+                                await this.saveFollowedTarget(user, cleanUrl)
+                            }
                         }
                     }
                     this.sessionEngagedProfiles.add(cleanUrl)
@@ -1194,6 +1244,7 @@ class InstagramBot {
                         this.sessionLikes++
                         await storage.set(this.pKey("stats"), this.stats)
                         await storage.set(this.pKey("sessionLikes"), this.sessionLikes)
+                        if (profileName) await this.recordInteraction(profileName, "like", profileUrl || window.location.href, "Automated Post Like")
                         interacted = true
                     }
                 }
@@ -1213,13 +1264,27 @@ class InstagramBot {
                 })
 
                 if (btn) {
-                    (btn as HTMLElement).click()
-                    this.stats.follows++
-                    this.sessionFollows++
-                    await storage.set(this.pKey("stats"), this.stats)
-                    await storage.set(this.pKey("sessionFollows"), this.sessionFollows)
-                    if (profileName && profileUrl) await this.saveFollowedTarget(profileName, profileUrl)
-                    interacted = true
+                    if (profileName) {
+                        const prevUnfollowed = this.interactionHistory.find(r => r.username.toLowerCase() === profileName.toLowerCase() && r.action === 'unfollow')
+                        if (prevUnfollowed) {
+                            this.addLog(`Anti-Refollow Guard: Skipping follow for @${profileName} (unfollowed on ${prevUnfollowed.dateStr})`, "info")
+                        } else {
+                            (btn as HTMLElement).click()
+                            this.stats.follows++
+                            this.sessionFollows++
+                            await storage.set(this.pKey("stats"), this.stats)
+                            await storage.set(this.pKey("sessionFollows"), this.sessionFollows)
+                            if (profileName && profileUrl) await this.saveFollowedTarget(profileName, profileUrl)
+                            interacted = true
+                        }
+                    } else {
+                        (btn as HTMLElement).click()
+                        this.stats.follows++
+                        this.sessionFollows++
+                        await storage.set(this.pKey("stats"), this.stats)
+                        await storage.set(this.pKey("sessionFollows"), this.sessionFollows)
+                        interacted = true
+                    }
                 }
             }
         }
@@ -1235,6 +1300,7 @@ class InstagramBot {
                     this.sessionComments++
                     await storage.set(this.pKey("stats"), this.stats)
                     await storage.set(this.pKey("sessionComments"), this.sessionComments)
+                    if (profileName) await this.recordInteraction(profileName, "comment", profileUrl || window.location.href, "Comments Auto-Pilot")
                     interacted = true
                 }
             }
