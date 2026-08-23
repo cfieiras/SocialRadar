@@ -1388,6 +1388,26 @@ function Dashboard() {
                                 )
                             })()}
 
+                            {(!userStats || !userStats.latestPosts || userStats.latestPosts.length === 0) && (
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-8 flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className="p-3 rounded-xl bg-primary-500/10 text-primary-400">
+                                            <RefreshCw className="w-6 h-6" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-white font-bold text-base">Informe de Cuenta Pendiente</h4>
+                                            <p className="text-slate-400 text-xs mt-1">Haz clic en <strong>"Sincronizar Ahora"</strong> para cargar los mejores posts, tipos de contenido y métricas de tu cuenta de Instagram.</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={handleReloadInstagramAccount}
+                                        className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-black text-xs transition-all flex items-center gap-2"
+                                    >
+                                        <RefreshCw className="w-4 h-4" /> Sincronizar Ahora
+                                    </button>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-2 gap-8">
                                 {/* Engagement Rate Unified Card */}
                                 <div className={`bg-slate-900/40 border ${isOutdated ? 'border-amber-500/30' : 'border-slate-800/50'} rounded-[2.5rem] p-8 relative overflow-hidden group hover:border-purple-500/30 transition-all duration-500`}>
