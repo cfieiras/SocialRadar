@@ -433,9 +433,23 @@ class InstagramBot {
         this.addLog(`Clicking @${cleanTarget} in the account switcher modal...`, "success")
         this.simulateClick(targetBtn)
 
-        await this.sleep(3500)
+        // Verification Loop: Check if active Instagram session username changes to cleanTarget
+        let switchVerified = false
+        for (let attempt = 1; attempt <= 8; attempt++) {
+            await this.sleep(800)
+            const activeNow = await detectActiveUsername()
+            if (activeNow && activeNow.toLowerCase() === cleanTarget) {
+                switchVerified = true
+                this.addLog(`✅ Verification Passed: Active session detected as @${cleanTarget}!`, "success")
+                break
+            }
+        }
+
+        if (!switchVerified) {
+            this.addLog(`⚠️ Session cookie transition pending. Reloading Home page for @${cleanTarget}...`, "warning")
+        }
+
         this.isSwitchingAccount = false
-        this.addLog(`🔄 Cookie switch complete. Reloading Home to start session for @${cleanTarget}...`, "info")
         window.location.href = `https://www.instagram.com/?rotated=${cleanTarget}_${Date.now()}`
     }
 
@@ -587,6 +601,21 @@ class InstagramBot {
                 this.isSwitchingAccount = true
                 this.addLog(`🔄 Multi-Account Switch requested via URL: Target @${switchTarget}`, "info")
                 setTimeout(() => this.executeAccountSwitch(switchTarget), 1500)
+            }
+
+            const rotatedTarget = params.get('rotated')
+            if (rotatedTarget) {
+                const targetUser = rotatedTarget.split('_')[0].toLowerCase()
+                setTimeout(async () => {
+                    const currentActive = await detectActiveUsername()
+                    if (currentActive && currentActive.toLowerCase() === targetUser) {
+                        this.addLog(`✅ Multi-Account Switch VERIFIED: Successfully running on @${currentActive}!`, "success")
+                    } else {
+                        this.addLog(`❌ Multi-Account Switch FAILED: Expected active session @${targetUser}, but Instagram active account is @${currentActive || 'unknown'}. Please make sure @${targetUser} is logged into Instagram Web.`, "error")
+                        await storage.set("isRunning", false)
+                        this.active = false
+                    }
+                }, 2000)
             }
 
             const isAudit = params.get('audit') === 'true' || params.get('start_audit') === 'true'
