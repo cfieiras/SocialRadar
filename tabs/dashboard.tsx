@@ -505,10 +505,9 @@ function Dashboard() {
         }
     }
 
-    const addCompetitor = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key !== "Enter" || !newCompetitor.trim()) return
-
-        e.preventDefault()
+    const addCompetitor = async (e?: React.KeyboardEvent<HTMLInputElement> | React.FocusEvent<HTMLInputElement>) => {
+        if (e && 'key' in e && e.key !== "Enter") return
+        if (e && 'preventDefault' in e) e.preventDefault()
 
         if (newCompetitor.trim()) {
             const raw = newCompetitor.trim()

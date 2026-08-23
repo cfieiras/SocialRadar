@@ -726,11 +726,86 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
     }
 }
 
-/**
- * Special fetch for competitors that DOES NOT save to currentUserStats
- */
+export function parseCountString(val?: string | number): number {
+    if (typeof val === "number") return val
+    if (!val) return 0
+    const str = String(val).trim().toUpperCase()
+    if (str.includes("K")) {
+        return Math.round(parseFloat(str.replace("K", "")) * 1000)
+    }
+    if (str.includes("M")) {
+        return Math.round(parseFloat(str.replace("M", "")) * 1000000)
+    }
+    if (str.includes("B")) {
+        return Math.round(parseFloat(str.replace("B", "")) * 1000000000)
+    }
+    return parseInt(str.replace(/[^0-9]/g, ""), 10) || 0
+}
+
 export async function fetchCompetitorProfile(username: string): Promise<InstagramProfile | null> {
-    return refreshUserProfile(username)
+    const cleanUsername = username.replace(/^@/, '').trim().toLowerCase()
+    if (!cleanUsername) return null
+
+    // Try primary API refresh
+    const profile = await refreshUserProfile(cleanUsername)
+    if (profile && (profile.stats.followers > 0 || profile.stats.posts > 0)) {
+        return profile
+    }
+
+    // Fallback: Fetch profile HTML page & extract og:description meta tag
+    try {
+        console.log(`IG API: Competitor API empty, running HTML meta fallback for @${cleanUsername}...`)
+        const res = await fetch(`https://www.instagram.com/${cleanUsername}/`, { credentials: 'include' })
+        if (res.ok) {
+            const html = await res.text()
+            
+            // Meta tag regex for followers, following, posts
+            const metaMatch = html.match(/content="([0-9.,KMBkmb]+)\s*(?:Followers|seguidores),\s*([0-9.,KMBkmb]+)\s*(?:Following|seguidos),\s*([0-9.,KMBkmb]+)\s*(?:Posts|publicaciones)/i)
+            
+            let followers = 0
+            let following = 0
+            let posts = 0
+
+            if (metaMatch) {
+                followers = parseCountString(metaMatch[1])
+                following = parseCountString(metaMatch[2])
+                posts = parseCountString(metaMatch[3])
+            }
+
+            const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/i) || html.match(/<title>([^<]+)<\/title>/i)
+            let fullName = cleanUsername
+            if (titleMatch) {
+                const rawTitle = titleMatch[1].split('(')[0].split('•')[0].trim()
+                if (rawTitle) fullName = rawTitle
+            }
+
+            const avatarMatch = html.match(/<meta property="og:image" content="([^"]+)"/i)
+            const avatarUrl = avatarMatch ? sanitizeImageUrl(avatarMatch[1]) : `https://ui-avatars.com/api/?name=${cleanUsername}&background=0f172a&color=fff`
+
+            return {
+                username: cleanUsername,
+                fullName: fullName || cleanUsername,
+                avatarUrl,
+                bio: profile?.bio || "Bio available on deep audit.",
+                stats: {
+                    followers: followers || profile?.stats?.followers || 0,
+                    following: following || profile?.stats?.following || 0,
+                    posts: posts || profile?.stats?.posts || 0
+                },
+                isVerified: profile?.isVerified || false,
+                timestamp: Date.now(),
+                id: profile?.id || cleanUsername,
+                latestPosts: profile?.latestPosts || [],
+                engagementRate: profile?.engagementRate || 0,
+                trustScore: profile?.trustScore || 0,
+                growthVelocity: 0
+            }
+        }
+    } catch (e) {
+        console.warn("IG API: Competitor HTML fallback error", e)
+    }
+
+    return profile
 }
 
 async function updateLocalHistory(profile: InstagramProfile) {
