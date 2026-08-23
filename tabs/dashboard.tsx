@@ -482,6 +482,40 @@ function Dashboard() {
         await setDashboardGuideSeen(true)
     }
 
+    // Auto-refresh competitor profiles that have 0 followers or empty stats
+    useEffect(() => {
+        if (!competitorsData || competitorsData.length === 0) return
+
+        const needsRefresh = competitorsData.some((c: any) => !c.stats?.followers || c.stats.followers === 0)
+        if (needsRefresh) {
+            (async () => {
+                console.log("Dashboard: Refreshing competitor profiles with 0 followers...")
+                const updatedList = [...competitorsData]
+                let changed = false
+
+                for (let i = 0; i < updatedList.length; i++) {
+                    const comp = updatedList[i]
+                    if (!comp.stats?.followers || comp.stats.followers === 0) {
+                        try {
+                            const fresh = await fetchCompetitorProfile(comp.username)
+                            if (fresh && (fresh.stats?.followers > 0 || fresh.stats?.posts > 0)) {
+                                updatedList[i] = fresh
+                                changed = true
+                            }
+                        } catch (e) {
+                            console.warn(`Dashboard: Auto-refresh failed for @${comp.username}`, e)
+                        }
+                    }
+                }
+
+                if (changed) {
+                    await storage.set(competitorsDataKey, updatedList)
+                    setCompetitorsData(updatedList)
+                }
+            })()
+        }
+    }, [competitorsData, competitorsDataKey])
+
     useEffect(() => {
         if (!currentUsername || currentUsername === "global") return
         const syncTimer = setTimeout(() => {
@@ -505,9 +539,10 @@ function Dashboard() {
         }
     }
 
-    const addCompetitor = async (e?: React.KeyboardEvent<HTMLInputElement> | React.FocusEvent<HTMLInputElement>) => {
-        if (e && 'key' in e && e.key !== "Enter") return
-        if (e && 'preventDefault' in e) e.preventDefault()
+    const addCompetitor = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key !== "Enter" || !newCompetitor.trim()) return
+
+        e.preventDefault()
 
         if (newCompetitor.trim()) {
             const raw = newCompetitor.trim()

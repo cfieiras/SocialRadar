@@ -469,7 +469,93 @@ export async function detectActiveUsername(): Promise<string | null> {
     } catch (e) {
         console.warn("IG API: Username detection fetch failed", e)
     }
-    return null
+}
+
+function parseAbbreviatedCount(str?: string | null): number {
+    if (!str) return 0
+    const clean = String(str).replace(/,/g, '').trim()
+    if (/k$/i.test(clean)) return Math.round(parseFloat(clean) * 1000)
+    if (/m$/i.test(clean)) return Math.round(parseFloat(clean) * 1000000)
+    if (/b$/i.test(clean)) return Math.round(parseFloat(clean) * 1000000000)
+    return parseInt(clean, 10) || 0
+}
+
+async function scrapeProfileFromHtml(username: string): Promise<InstagramProfile | null> {
+    try {
+        console.log(`IG API: Attempting HTML profile scrape for @${username}...`)
+        const res = await fetch(`https://www.instagram.com/${username}/`, { credentials: 'include' })
+        if (!res.ok) return null
+        const html = await res.text()
+
+        let followers = 0
+        let following = 0
+        let posts = 0
+        let fullName = username
+        let bio = ""
+        let avatarUrl = `https://ui-avatars.com/api/?name=${username}&background=0f172a&color=fff`
+
+        // 1. Meta Description Regex (Works on ALL Instagram public profiles)
+        const metaMatch = html.match(/content=["']([^"']*?Followers[^"']*?)["']/i) ||
+            html.match(/content=["']([^"']*?seguidores[^"']*?)["']/i) ||
+            html.match(/meta name=["']description["'] content=["']([^"']+)["']/i)
+
+        if (metaMatch) {
+            const desc = metaMatch[1]
+            const fMatch = desc.match(/([0-9.,KMBkmb]+)\s+(?:Followers|seguidores)/i)
+            const fgMatch = desc.match(/([0-9.,KMBkmb]+)\s+(?:Following|seguidos)/i)
+            const pMatch = desc.match(/([0-9.,KMBkmb]+)\s+(?:Posts|publicaciones)/i)
+
+            if (fMatch) followers = parseAbbreviatedCount(fMatch[1])
+            if (fgMatch) following = parseAbbreviatedCount(fgMatch[1])
+            if (pMatch) posts = parseAbbreviatedCount(pMatch[1])
+        }
+
+        // 2. Embedded JSON scripts
+        const scriptMatches = [...html.matchAll(/<script type="application\/json"[^>]*>(.*?)<\/script>/gs)]
+        for (const match of scriptMatches) {
+            try {
+                const parsed = JSON.parse(match[1])
+                const u = parsed?.graphql?.user || parsed?.require?.[0]?.[3]?.[0]?.user || parsed?.user
+                if (u) {
+                    if (u.full_name) fullName = u.full_name
+                    if (u.biography) bio = u.biography
+                    if (u.profile_pic_url_hd || u.profile_pic_url) avatarUrl = u.profile_pic_url_hd || u.profile_pic_url
+                    if (u.edge_followed_by?.count) followers = u.edge_followed_by.count
+                    if (u.edge_follow?.count) following = u.edge_follow.count
+                    if (u.edge_owner_to_timeline_media?.count) posts = u.edge_owner_to_timeline_media.count
+                }
+            } catch (e) { }
+        }
+
+        // 3. Extract posts media shortcodes/urls
+        const postMatches = [...html.matchAll(/"shortcode":"([^"]+)".*?"display_url":"([^"]+)"/g)]
+        const latestPosts = postMatches.slice(0, 12).map((m, i) => ({
+            id: m[1] || `scraped_${i}`,
+            url: sanitizeImageUrl(m[2]),
+            likes: 0,
+            comments: 0,
+            timestamp: Date.now() / 1000,
+            shortcode: m[1]
+        }))
+
+        return {
+            username,
+            fullName,
+            avatarUrl: sanitizeImageUrl(avatarUrl),
+            bio,
+            stats: { followers, posts, following },
+            isVerified: false,
+            timestamp: Date.now(),
+            id: `scraped_${username}`,
+            latestPosts,
+            engagementRate: 0,
+            trustScore: 50,
+            growthVelocity: 0
+        }
+    } catch (e) {
+        console.warn(`IG API: Scrape profile fallback failed for @${username}`, e)
+        return null
+    }
 }
 
 export async function refreshUserProfile(targetUsername?: string): Promise<InstagramProfile | null> {
@@ -498,22 +584,29 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         if (!username) return null
 
         // 2. Fetch full profile
-        const apiUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`
-        const response = await fetch(apiUrl, {
-            headers: {
-                'x-ig-app-id': '936619743392459',
-                'x-requested-with': 'XMLHttpRequest',
-                'x-csrftoken': csrfToken
-            },
-            credentials: 'include'
-        })
+        let user: any = null
+        try {
+            const apiUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`
+            const response = await fetch(apiUrl, {
+                headers: {
+                    'x-ig-app-id': '936619743392459',
+                    'x-requested-with': 'XMLHttpRequest',
+                    'x-csrftoken': csrfToken
+                },
+                credentials: 'include'
+            })
 
-        if (!response.ok) return null
-        const resData = await response.json() // Renamed to avoid conflict with 'data' inside profile construction
-        const user = resData.data?.user
+            if (response.ok) {
+                const resData = await response.json()
+                user = resData.data?.user
+            }
+        } catch (e) {
+            console.warn(`IG API: web_profile_info failed for @${username}`, e)
+        }
+
         if (!user) {
-            console.error("IG API: No user found in response", resData)
-            return null
+            console.log(`IG API: web_profile_info returned no user for @${username}, falling back to HTML profile scraping...`)
+            return await scrapeProfileFromHtml(username)
         }
 
         console.log("IG API: Fetched user data for", user.username)
@@ -726,86 +819,11 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
     }
 }
 
-export function parseCountString(val?: string | number): number {
-    if (typeof val === "number") return val
-    if (!val) return 0
-    const str = String(val).trim().toUpperCase()
-    if (str.includes("K")) {
-        return Math.round(parseFloat(str.replace("K", "")) * 1000)
-    }
-    if (str.includes("M")) {
-        return Math.round(parseFloat(str.replace("M", "")) * 1000000)
-    }
-    if (str.includes("B")) {
-        return Math.round(parseFloat(str.replace("B", "")) * 1000000000)
-    }
-    return parseInt(str.replace(/[^0-9]/g, ""), 10) || 0
-}
-
+/**
+ * Special fetch for competitors that DOES NOT save to currentUserStats
+ */
 export async function fetchCompetitorProfile(username: string): Promise<InstagramProfile | null> {
-    const cleanUsername = username.replace(/^@/, '').trim().toLowerCase()
-    if (!cleanUsername) return null
-
-    // Try primary API refresh
-    const profile = await refreshUserProfile(cleanUsername)
-    if (profile && (profile.stats.followers > 0 || profile.stats.posts > 0)) {
-        return profile
-    }
-
-    // Fallback: Fetch profile HTML page & extract og:description meta tag
-    try {
-        console.log(`IG API: Competitor API empty, running HTML meta fallback for @${cleanUsername}...`)
-        const res = await fetch(`https://www.instagram.com/${cleanUsername}/`, { credentials: 'include' })
-        if (res.ok) {
-            const html = await res.text()
-            
-            // Meta tag regex for followers, following, posts
-            const metaMatch = html.match(/content="([0-9.,KMBkmb]+)\s*(?:Followers|seguidores),\s*([0-9.,KMBkmb]+)\s*(?:Following|seguidos),\s*([0-9.,KMBkmb]+)\s*(?:Posts|publicaciones)/i)
-            
-            let followers = 0
-            let following = 0
-            let posts = 0
-
-            if (metaMatch) {
-                followers = parseCountString(metaMatch[1])
-                following = parseCountString(metaMatch[2])
-                posts = parseCountString(metaMatch[3])
-            }
-
-            const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/i) || html.match(/<title>([^<]+)<\/title>/i)
-            let fullName = cleanUsername
-            if (titleMatch) {
-                const rawTitle = titleMatch[1].split('(')[0].split('•')[0].trim()
-                if (rawTitle) fullName = rawTitle
-            }
-
-            const avatarMatch = html.match(/<meta property="og:image" content="([^"]+)"/i)
-            const avatarUrl = avatarMatch ? sanitizeImageUrl(avatarMatch[1]) : `https://ui-avatars.com/api/?name=${cleanUsername}&background=0f172a&color=fff`
-
-            return {
-                username: cleanUsername,
-                fullName: fullName || cleanUsername,
-                avatarUrl,
-                bio: profile?.bio || "Bio available on deep audit.",
-                stats: {
-                    followers: followers || profile?.stats?.followers || 0,
-                    following: following || profile?.stats?.following || 0,
-                    posts: posts || profile?.stats?.posts || 0
-                },
-                isVerified: profile?.isVerified || false,
-                timestamp: Date.now(),
-                id: profile?.id || cleanUsername,
-                latestPosts: profile?.latestPosts || [],
-                engagementRate: profile?.engagementRate || 0,
-                trustScore: profile?.trustScore || 0,
-                growthVelocity: 0
-            }
-        }
-    } catch (e) {
-        console.warn("IG API: Competitor HTML fallback error", e)
-    }
-
-    return profile
+    return refreshUserProfile(username)
 }
 
 async function updateLocalHistory(profile: InstagramProfile) {
