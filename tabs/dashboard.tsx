@@ -132,19 +132,31 @@ function Dashboard() {
     const manifest = chrome.runtime.getManifest()
     const currentVersion = manifest.version
 
+    const isNewerVersion = (remote: string, current: string): boolean => {
+        const r = remote.split('.').map(Number)
+        const c = current.split('.').map(Number)
+        for (let i = 0; i < Math.max(r.length, c.length); i++) {
+            const rv = r[i] || 0
+            const cv = c[i] || 0
+            if (rv > cv) return true
+            if (rv < cv) return false
+        }
+        return false
+    }
+
     useEffect(() => {
         const checkUpdate = async () => {
             try {
                 const res = await fetch(`${GIST_VERSION_URL}?t=${Date.now()}`)
                 if (!res.ok) return
                 const data = await res.json()
-                if (data.version !== currentVersion) {
+                if (data.version && isNewerVersion(data.version, currentVersion)) {
                     setUpdateStatus({ available: true, remoteVersion: data.version })
                 }
             } catch (e) { console.error(e) }
         }
         checkUpdate()
-    }, [])
+    }, [currentVersion])
     const [activeTab, setActiveTab] = useState("overview")
 
     const [userStats] = useStorage({ key: "currentUserStats", instance: storage }, null)
