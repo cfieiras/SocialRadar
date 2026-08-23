@@ -19,6 +19,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { supabase } from "../lib/supabaseClient"
 import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
 
+const REMOTE_PACKAGE_URL = "https://raw.githubusercontent.com/cfieiras/SocialRadar/main/package.json"
 const GIST_VERSION_URL = "https://gist.githubusercontent.com/cfieiras/a74789aead58df67812f31099ffe7e02/raw/social-radar-version.json"
 const REPO_RELEASES_URL = "https://github.com/cfieiras/SocialRadar/releases/latest"
 const ENABLE_FIRST_TIME_DASHBOARD_GUIDE = false
@@ -147,11 +148,20 @@ function Dashboard() {
     useEffect(() => {
         const checkUpdate = async () => {
             try {
-                const res = await fetch(`${GIST_VERSION_URL}?t=${Date.now()}`)
-                if (!res.ok) return
-                const data = await res.json()
-                if (data.version && isNewerVersion(data.version, currentVersion)) {
-                    setUpdateStatus({ available: true, remoteVersion: data.version })
+                let remoteVer = ""
+                const res = await fetch(`${REMOTE_PACKAGE_URL}?t=${Date.now()}`)
+                if (res.ok) {
+                    const data = await res.json()
+                    remoteVer = data.version || ""
+                } else {
+                    const gistRes = await fetch(`${GIST_VERSION_URL}?t=${Date.now()}`)
+                    if (gistRes.ok) {
+                        const gistData = await gistRes.json()
+                        remoteVer = gistData.version || ""
+                    }
+                }
+                if (remoteVer && isNewerVersion(remoteVer, currentVersion)) {
+                    setUpdateStatus({ available: true, remoteVersion: remoteVer })
                 }
             } catch (e) { console.error(e) }
         }
