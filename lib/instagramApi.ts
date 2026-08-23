@@ -1,4 +1,4 @@
-﻿import { Storage } from "@plasmohq/storage"
+import { Storage } from "@plasmohq/storage"
 import { supabase } from "./supabaseClient"
 
 const storage = new Storage({
@@ -9,6 +9,19 @@ const accountKey = (username: string, key: string) => `${username}_${key}`
 const STABLE_HISTORY_TABLE = "account_daily_snapshots"
 const LEGACY_HISTORY_TABLE = "follower_history"
 const AUDIENCE_DATABASE_TABLE = "audience_database_entries"
+const INTERACTION_HISTORY_TABLE = "bot_interaction_history"
+const ACCOUNT_SETTINGS_TABLE = "bot_account_settings"
+
+export interface InteractionRecord {
+    id: string
+    username: string
+    action: "follow" | "unfollow" | "like" | "comment"
+    timestamp: number
+    dateStr: string
+    timeStr: string
+    url?: string
+    details?: string
+}
 
 type DailySnapshotRow = {
     snapshot_date?: string
@@ -247,6 +260,148 @@ export async function syncAudienceDatabaseToSupabase(instagramUsername: string, 
     } catch (error) {
         console.warn("Audience DB: sync pipeline failed", error)
         return false
+    }
+}
+
+export async function syncInteractionHistoryToSupabase(instagramUsername: string, history: InteractionRecord[] = []): Promise<boolean> {
+    if (!instagramUsername) return false
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.user?.id) return false
+
+        const cleanUsername = instagramUsername.toLowerCase()
+        const payload = history.slice(0, 500).map((record) => ({
+            id: record.id || `${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            user_id: session.user.id,
+            instagram_username: cleanUsername,
+            target_username: (record.username || "").toLowerCase(),
+            action: record.action,
+            target_url: record.url || null,
+            details: record.details || null,
+            date_str: record.dateStr || new Date().toISOString().split('T')[0],
+            time_str: record.timeStr || new Date().toLocaleTimeString(),
+            created_at: new Date(record.timestamp || Date.now()).toISOString()
+        }))
+
+        if (payload.length === 0) return true
+
+        const { error } = await supabase
+            .from(INTERACTION_HISTORY_TABLE)
+            .upsert(payload, { onConflict: 'id' })
+
+        if (error && !String(error.message || "").toLowerCase().includes("does not exist")) {
+            console.warn("Interaction History DB: sync error", error.message || error)
+            return false
+        }
+        return true
+    } catch (error) {
+        console.warn("Interaction History DB: sync pipeline failed", error)
+        return false
+    }
+}
+
+export async function fetchInteractionHistoryFromSupabase(instagramUsername: string): Promise<InteractionRecord[]> {
+    if (!instagramUsername) return []
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.user?.id) return []
+
+        const { data, error } = await supabase
+            .from(INTERACTION_HISTORY_TABLE)
+            .select('id, target_username, action, created_at, date_str, time_str, target_url, details')
+            .eq('user_id', session.user.id)
+            .eq('instagram_username', instagramUsername.toLowerCase())
+            .order('created_at', { ascending: false })
+            .limit(1000)
+
+        if (error) {
+            console.warn("Interaction History DB: fetch error", error.message || error)
+            return []
+        }
+
+        return (data || []).map((row: any) => ({
+            id: row.id,
+            username: row.target_username,
+            action: row.action,
+            timestamp: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+            dateStr: row.date_str || "",
+            timeStr: row.time_str || "",
+            url: row.target_url || undefined,
+            details: row.details || undefined
+        }))
+    } catch (error) {
+        console.warn("Interaction History DB: fetch pipeline failed", error)
+        return []
+    }
+}
+
+export async function syncAccountSettingsToSupabase(instagramUsername: string, settings: {
+    config?: any
+    delays?: any
+    targetHashtags?: string[]
+    targetCompetitors?: string[]
+    targetPostUrls?: string[]
+    commentTemplates?: string[]
+}): Promise<boolean> {
+    if (!instagramUsername) return false
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.user?.id) return false
+
+        const cleanUsername = instagramUsername.toLowerCase()
+        const payload = {
+            user_id: session.user.id,
+            instagram_username: cleanUsername,
+            config: settings.config || {},
+            delays: settings.delays || {},
+            target_hashtags: settings.targetHashtags || [],
+            target_competitors: settings.targetCompetitors || [],
+            target_post_urls: settings.targetPostUrls || [],
+            comment_templates: settings.commentTemplates || [],
+            updated_at: new Date().toISOString()
+        }
+
+        const { error } = await supabase
+            .from(ACCOUNT_SETTINGS_TABLE)
+            .upsert(payload, { onConflict: 'user_id,instagram_username' })
+
+        if (error && !String(error.message || "").toLowerCase().includes("does not exist")) {
+            console.warn("Account Settings DB: sync error", error.message || error)
+            return false
+        }
+        return true
+    } catch (error) {
+        console.warn("Account Settings DB: sync pipeline failed", error)
+        return false
+    }
+}
+
+export async function fetchAccountSettingsFromSupabase(instagramUsername: string): Promise<any | null> {
+    if (!instagramUsername) return null
+    try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.user?.id) return null
+
+        const { data, error } = await supabase
+            .from(ACCOUNT_SETTINGS_TABLE)
+            .select('config, delays, target_hashtags, target_competitors, target_post_urls, comment_templates')
+            .eq('user_id', session.user.id)
+            .eq('instagram_username', instagramUsername.toLowerCase())
+            .single()
+
+        if (error || !data) return null
+
+        return {
+            config: data.config,
+            delays: data.delays,
+            targetHashtags: data.target_hashtags,
+            targetCompetitors: data.target_competitors,
+            targetPostUrls: data.target_post_urls,
+            commentTemplates: data.comment_templates
+        }
+    } catch (error) {
+        console.warn("Account Settings DB: fetch pipeline failed", error)
+        return null
     }
 }
 

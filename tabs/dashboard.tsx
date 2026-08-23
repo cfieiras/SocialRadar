@@ -14,7 +14,7 @@ import {
 import "../style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
 import helpDemoVideo from "url:~assets/help/SocialRadar_demo_landscape_es.mp4"
-import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, type Unfollower } from "../lib/instagramApi"
+import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, syncAccountSettingsToSupabase, fetchAccountSettingsFromSupabase, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
 import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
@@ -480,6 +480,21 @@ function Dashboard() {
         setShowDashboardGuide(false)
         await setDashboardGuideSeen(true)
     }
+
+    useEffect(() => {
+        if (!currentUsername || currentUsername === "global") return
+        const syncTimer = setTimeout(() => {
+            void syncAccountSettingsToSupabase(currentUsername, {
+                config,
+                delays,
+                targetHashtags: hashtags,
+                targetCompetitors: competitors,
+                targetPostUrls: targetPosts,
+                commentTemplates
+            })
+        }, 1500)
+        return () => clearTimeout(syncTimer)
+    }, [currentUsername, config, delays, hashtags, competitors, targetPosts, commentTemplates])
 
     const addTag = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && newTag.trim()) {

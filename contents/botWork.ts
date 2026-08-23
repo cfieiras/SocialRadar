@@ -1,6 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 import { Storage } from "@plasmohq/storage"
-import { detectActiveUsername, extractBestAvatarUrl, fetchAudienceDatabaseFromSupabase, storeCurrentUserProfile, syncAudienceDatabaseToSupabase } from "../lib/instagramApi"
+import { detectActiveUsername, extractBestAvatarUrl, fetchAudienceDatabaseFromSupabase, storeCurrentUserProfile, syncAudienceDatabaseToSupabase, fetchInteractionHistoryFromSupabase, syncInteractionHistoryToSupabase, fetchAccountSettingsFromSupabase, syncAccountSettingsToSupabase } from "../lib/instagramApi"
 
 export const config: PlasmoCSConfig = {
     matches: ["https://www.instagram.com/*"]
@@ -747,6 +747,37 @@ class InstagramBot {
             this.followedUsers = remoteAudience
             await storage.set(this.pKey("followedUsers"), remoteAudience)
         }
+
+        const remoteHistory = await fetchInteractionHistoryFromSupabase(this.activeUsername)
+        if (remoteHistory.length > 0 && (!this.interactionHistory || this.interactionHistory.length === 0)) {
+            this.interactionHistory = remoteHistory
+            await storage.set(this.pKey("interactionHistory"), remoteHistory)
+        }
+
+        const remoteSettings = await fetchAccountSettingsFromSupabase(this.activeUsername)
+        if (remoteSettings) {
+            if (remoteSettings.config && Object.keys(remoteSettings.config).length > 0) {
+                this.config = { ...this.config, ...remoteSettings.config }
+                await storage.set(this.pKey("botConfig"), this.config)
+            }
+            if (remoteSettings.delays && Object.keys(remoteSettings.delays).length > 0) {
+                this.delayConfig = { ...this.delayConfig, ...remoteSettings.delays }
+                await storage.set(this.pKey("delays"), this.delayConfig)
+            }
+            if (remoteSettings.targetHashtags && remoteSettings.targetHashtags.length > 0) {
+                await storage.set(this.pKey("targetHashtags"), remoteSettings.targetHashtags)
+            }
+            if (remoteSettings.targetCompetitors && remoteSettings.targetCompetitors.length > 0) {
+                await storage.set(this.pKey("targetCompetitors"), remoteSettings.targetCompetitors)
+            }
+            if (remoteSettings.targetPostUrls && remoteSettings.targetPostUrls.length > 0) {
+                await storage.set(this.pKey("targetPostUrls"), remoteSettings.targetPostUrls)
+            }
+            if (remoteSettings.commentTemplates && remoteSettings.commentTemplates.length > 0) {
+                await storage.set(this.pKey("commentTemplates"), remoteSettings.commentTemplates)
+            }
+        }
+
         this.processedHistory = await storage.get<string[]>(this.pKey("processedHistory")) || []
         this.resetTransientSessionState()
 
@@ -779,6 +810,7 @@ class InstagramBot {
 
             this.interactionHistory = [record, ...(this.interactionHistory || [])].slice(0, 10000)
             await storage.set(this.pKey("interactionHistory"), this.interactionHistory)
+            void syncInteractionHistoryToSupabase(this.activeUsername, this.interactionHistory)
             this.addLog(`Recorded ${action.toUpperCase()} for @${cleanUser}`, "info")
             if (url) await this.addToHistory(url)
         } catch (e) {
