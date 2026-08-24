@@ -14,7 +14,7 @@ import {
 import "../style.css"
 import socialRadarLogo from "url:~assets/social_radar_logo.png"
 import helpDemoVideo from "url:~assets/help/SocialRadar_demo_landscape_es.mp4"
-import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, syncAccountSettingsToSupabase, fetchAccountSettingsFromSupabase, extractTopViralPosts, calculateCompetitorFormatBreakdown, calculateAccountFormatBreakdown, type ViralPostItem, type Unfollower } from "../lib/instagramApi"
+import { detectActiveUsername, refreshUserProfile, runDeepScan, fetchCompetitorProfile, syncStatsToSupabase, fetchHistoryFromSupabase, reportCriticalError, resolveStoredAvatarUrl, sanitizeImageUrl, syncAccountSettingsToSupabase, fetchAccountSettingsFromSupabase, syncFullProfileToSupabase, fetchFullProfileFromSupabase, extractTopViralPosts, calculateCompetitorFormatBreakdown, calculateAccountFormatBreakdown, type ViralPostItem, type Unfollower } from "../lib/instagramApi"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { supabase } from "../lib/supabaseClient"
 import { SubscriptionScreen, LoginScreen, SignUpScreen } from "../components/AuthScreens"
@@ -489,6 +489,23 @@ function Dashboard() {
         setShowDashboardGuide(false)
         await setDashboardGuideSeen(true)
     }
+
+    // Restore profile intelligence from Supabase Cloud if local profile is empty/missing
+    useEffect(() => {
+        if (!currentUsername || currentUsername === "global") return
+        if (userStats && userStats.latestPosts && userStats.latestPosts.length > 0) return
+
+        (async () => {
+            console.log(`Dashboard: Attempting to restore profile data for @${currentUsername} from Supabase Cloud...`)
+            const cloudProfile = await fetchFullProfileFromSupabase(currentUsername)
+            if (cloudProfile) {
+                console.log(`Dashboard: Restored profile data for @${currentUsername} from Supabase Cloud!`, cloudProfile)
+                setAccountUserStats(cloudProfile)
+                setGlobalUserStats(cloudProfile)
+                await storage.set(`${currentUsername}_currentUserStats`, cloudProfile)
+            }
+        })()
+    }, [currentUsername, userStats])
 
     // Auto-refresh competitor profiles that have 0 followers or empty stats
     useEffect(() => {
@@ -1187,42 +1204,7 @@ function Dashboard() {
                                 </div>
                             )}
 
-                            {/* In Development Notice */}
-                            <div className="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-3xl p-6 flex items-center justify-between mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
-                                <div className="flex items-center gap-6">
-                                    <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-400">
-                                        <Zap className="w-6 h-6" />
-                                    </div>
-                                    <div>
-                                        <h4 className="font-black text-indigo-400 uppercase tracking-tight">New Features In Development</h4>
-                                        <p className="text-sm text-slate-400 font-medium">Comments Auto-Pilot, Specific Post Targeting, and Advanced Competitor Analysis are coming soon.</p>
-                                    </div>
-                                </div>
-                                <span className="px-4 py-1.5 bg-indigo-500 text-white text-[10px] font-black uppercase rounded-full shadow-lg shadow-indigo-500/20">
-                                    BETA
-                                </span>
-                            </div>
 
-                            {/* Engagement Warning Notice */}
-                            {userStats && (userStats.engagementRate === 0 || !userStats.engagementRate) && userStats.analyzedPostsCount > 0 && (
-                                <div className="bg-rose-500/10 border border-rose-500/30 rounded-3xl p-6 flex items-center justify-between animate-in fade-in slide-in-from-top-4 duration-500">
-                                    <div className="flex items-center gap-6">
-                                        <div className="p-3 rounded-2xl bg-rose-500/20 text-rose-400">
-                                            <AlertTriangle className="w-6 h-6" />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-black text-rose-400 uppercase tracking-tight">Low Engagement Detected</h4>
-                                            <p className="text-sm text-slate-400 font-medium whitespace-nowrap">Your recent posts haven't captured interactions. This might affect your account trust score.</p>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={() => setShowEngagementModal(true)}
-                                        className="px-6 py-2 rounded-xl bg-rose-500 text-white text-[10px] font-black uppercase hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20"
-                                    >
-                                        Check Analysis
-                                    </button>
-                                </div>
-                            )}
 
 
 
@@ -1396,25 +1378,7 @@ function Dashboard() {
                                 )
                             })()}
 
-                            {(!userStats || !userStats.latestPosts || userStats.latestPosts.length === 0) && (
-                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-8 flex items-center justify-between">
-                                    <div className="flex items-center gap-4">
-                                        <div className="p-3 rounded-xl bg-primary-500/10 text-primary-400">
-                                            <RefreshCw className="w-6 h-6" />
-                                        </div>
-                                        <div>
-                                            <h4 className="text-white font-bold text-base">Informe de Cuenta Pendiente</h4>
-                                            <p className="text-slate-400 text-xs mt-1">Haz clic en <strong>"Sincronizar Ahora"</strong> para cargar los mejores posts, tipos de contenido y métricas de tu cuenta de Instagram.</p>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={handleReloadInstagramAccount}
-                                        className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-black text-xs transition-all flex items-center gap-2"
-                                    >
-                                        <RefreshCw className="w-4 h-4" /> Sincronizar Ahora
-                                    </button>
-                                </div>
-                            )}
+
 
                             <div className="grid grid-cols-2 gap-8">
                                 {/* Engagement Rate Unified Card */}

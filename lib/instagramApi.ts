@@ -342,6 +342,7 @@ export async function syncAccountSettingsToSupabase(instagramUsername: string, s
     targetCompetitors?: string[]
     targetPostUrls?: string[]
     commentTemplates?: string[]
+    profileData?: InstagramProfile
 }): Promise<boolean> {
     if (!instagramUsername) return false
     try {
@@ -349,10 +350,15 @@ export async function syncAccountSettingsToSupabase(instagramUsername: string, s
         if (!session?.user?.id) return false
 
         const cleanUsername = instagramUsername.toLowerCase()
+        const configPayload = { ...settings.config }
+        if (settings.profileData) {
+            configPayload._cachedProfile = settings.profileData
+        }
+
         const payload = {
             user_id: session.user.id,
             instagram_username: cleanUsername,
-            config: settings.config || {},
+            config: configPayload,
             delays: settings.delays || {},
             target_hashtags: settings.targetHashtags || [],
             target_competitors: settings.targetCompetitors || [],
@@ -397,10 +403,40 @@ export async function fetchAccountSettingsFromSupabase(instagramUsername: string
             targetHashtags: data.target_hashtags,
             targetCompetitors: data.target_competitors,
             targetPostUrls: data.target_post_urls,
-            commentTemplates: data.comment_templates
+            commentTemplates: data.comment_templates,
+            profileData: data.config?._cachedProfile || null
         }
     } catch (error) {
         console.warn("Account Settings DB: fetch pipeline failed", error)
+        return null
+    }
+}
+
+export async function syncFullProfileToSupabase(profile: InstagramProfile): Promise<boolean> {
+    if (!profile || !profile.username) return false
+    try {
+        await syncStatsToSupabase(profile)
+        const currentSettings = await fetchAccountSettingsFromSupabase(profile.username) || {}
+        return await syncAccountSettingsToSupabase(profile.username, {
+            ...currentSettings,
+            profileData: profile
+        })
+    } catch (e) {
+        console.warn("IG API: syncFullProfileToSupabase failed", e)
+        return false
+    }
+}
+
+export async function fetchFullProfileFromSupabase(instagramUsername: string): Promise<InstagramProfile | null> {
+    if (!instagramUsername) return null
+    try {
+        const settings = await fetchAccountSettingsFromSupabase(instagramUsername)
+        if (settings?.profileData) {
+            return settings.profileData as InstagramProfile
+        }
+        return null
+    } catch (e) {
+        console.warn("IG API: fetchFullProfileFromSupabase failed", e)
         return null
     }
 }
@@ -800,7 +836,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         if (!targetUsername) {
             await storeCurrentUserProfile(profileData)
             await updateLocalHistory(profileData)
-            // await syncStatsToSupabase(profileData) // Disabled auto-sync to prevents zeros. Manual sync only.
+            void syncFullProfileToSupabase(profileData)
         }
 
         return profileData
