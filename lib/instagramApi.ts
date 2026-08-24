@@ -44,19 +44,24 @@ export function sanitizeImageUrl(url?: string | null): string {
 }
 
 export function extractBestAvatarUrl(user?: Record<string, any> | null, fallbackUrl?: string | null): string {
+    const rawFallback = (fallbackUrl && !fallbackUrl.includes("ui-avatars.com")) ? fallbackUrl : ""
     const candidate = user?.profile_pic_url_hd ||
         user?.profile_pic_url ||
         user?.profilePicUrl ||
         user?.hd_profile_pic_url_info?.url ||
         user?.profile_pic_url_info?.url ||
-        fallbackUrl ||
+        user?.avatarUrl ||
+        user?.avatarDisplayUrl ||
+        rawFallback ||
         ""
 
     return sanitizeImageUrl(candidate)
 }
 
 export function resolveStoredAvatarUrl(profile?: Pick<InstagramProfile, "avatarDisplayUrl" | "avatarUrl"> | null): string {
-    return sanitizeImageUrl(profile?.avatarDisplayUrl || profile?.avatarUrl || "")
+    const candidate = profile?.avatarDisplayUrl || profile?.avatarUrl || ""
+    if (!candidate || candidate.includes("ui-avatars.com")) return ""
+    return sanitizeImageUrl(candidate)
 }
 
 export interface InstagramProfile {
@@ -519,16 +524,17 @@ function parseAbbreviatedCount(str?: string | null): number {
 async function scrapeProfileFromHtml(username: string): Promise<InstagramProfile | null> {
     try {
         console.log(`IG API: Attempting HTML profile scrape for @${username}...`)
+        const existingProfile = (await getStoredCurrentUserProfile(username)) || (await fetchFullProfileFromSupabase(username))
         const res = await fetch(`https://www.instagram.com/${username}/`, { credentials: 'include' })
-        if (!res.ok) return null
+        if (!res.ok) return existingProfile || null
         const html = await res.text()
 
-        let followers = 0
-        let following = 0
-        let posts = 0
-        let fullName = username
-        let bio = ""
-        let avatarUrl = `https://ui-avatars.com/api/?name=${username}&background=0f172a&color=fff`
+        let followers = existingProfile?.stats?.followers || 0
+        let following = existingProfile?.stats?.following || 0
+        let posts = existingProfile?.stats?.posts || 0
+        let fullName = existingProfile?.fullName || username
+        let bio = existingProfile?.bio || ""
+        let avatarUrl = extractBestAvatarUrl(null, existingProfile?.avatarUrl)
 
         // 1. Meta Description Regex (Works on ALL Instagram public profiles)
         const metaMatch = html.match(/content=["']([^"']*?Followers[^"']*?)["']/i) ||
@@ -555,7 +561,7 @@ async function scrapeProfileFromHtml(username: string): Promise<InstagramProfile
                 if (u) {
                     if (u.full_name) fullName = u.full_name
                     if (u.biography) bio = u.biography
-                    if (u.profile_pic_url_hd || u.profile_pic_url) avatarUrl = u.profile_pic_url_hd || u.profile_pic_url
+                    if (u.profile_pic_url_hd || u.profile_pic_url) avatarUrl = extractBestAvatarUrl(u, avatarUrl)
                     if (u.edge_followed_by?.count) followers = u.edge_followed_by.count
                     if (u.edge_follow?.count) following = u.edge_follow.count
                     if (u.edge_owner_to_timeline_media?.count) posts = u.edge_owner_to_timeline_media.count
@@ -565,7 +571,7 @@ async function scrapeProfileFromHtml(username: string): Promise<InstagramProfile
 
         // 3. Extract posts media shortcodes/urls
         const postMatches = [...html.matchAll(/"shortcode":"([^"]+)".*?"display_url":"([^"]+)"/g)]
-        const latestPosts = postMatches.slice(0, 12).map((m, i) => ({
+        let latestPosts = postMatches.slice(0, 12).map((m, i) => ({
             id: m[1] || `scraped_${i}`,
             url: sanitizeImageUrl(m[2]),
             likes: 0,
@@ -574,19 +580,34 @@ async function scrapeProfileFromHtml(username: string): Promise<InstagramProfile
             shortcode: m[1]
         }))
 
+        // Preserve existing posts if scraped posts have no likes/comments but existing posts do
+        if (latestPosts.length === 0 || !latestPosts.some(p => p.likes > 0)) {
+            if (existingProfile?.latestPosts && existingProfile.latestPosts.length > 0) {
+                latestPosts = existingProfile.latestPosts
+            }
+        }
+
+        const engagementRate = (existingProfile?.engagementRate && existingProfile.engagementRate > 0)
+            ? existingProfile.engagementRate
+            : 0
+
+        const trustScore = (existingProfile?.trustScore && existingProfile.trustScore > 0)
+            ? existingProfile.trustScore
+            : 50
+
         return {
             username,
             fullName,
-            avatarUrl: sanitizeImageUrl(avatarUrl),
+            avatarUrl: extractBestAvatarUrl(null, avatarUrl || existingProfile?.avatarUrl),
             bio,
             stats: { followers, posts, following },
-            isVerified: false,
+            isVerified: existingProfile?.isVerified || false,
             timestamp: Date.now(),
-            id: `scraped_${username}`,
+            id: existingProfile?.id || `scraped_${username}`,
             latestPosts,
-            engagementRate: 0,
-            trustScore: 50,
-            growthVelocity: 0
+            engagementRate,
+            trustScore,
+            growthVelocity: existingProfile?.growthVelocity || 0
         }
     } catch (e) {
         console.warn(`IG API: Scrape profile fallback failed for @${username}`, e)
