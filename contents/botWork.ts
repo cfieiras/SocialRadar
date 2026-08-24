@@ -374,7 +374,7 @@ class InstagramBot {
         }
 
         if (!switchOption) {
-            this.addLog("Failed to find 'Cambiar de cuenta' option in Instagram menu.", "error")
+            this.addLog("Failed to find 'Cambiar de cuenta' option in Instagram menu.", "warning")
             await storage.set("isRunning", false)
             this.active = false
             this._loopRunning = false
@@ -422,7 +422,7 @@ class InstagramBot {
 
         if (!targetBtn) {
             const visibleText = modalTextDump.slice(0, 10).join(" | ")
-            this.addLog(`Account @${cleanTarget} not found in Switcher list. Visible items: [${visibleText}]`, "error")
+            this.addLog(`Account @${cleanTarget} not found in Switcher list. Visible items: [${visibleText}]`, "warning")
             await storage.set("isRunning", false)
             this.active = false
             this._loopRunning = false
@@ -615,7 +615,7 @@ class InstagramBot {
                             await this.navigateToNextTarget()
                         }
                     } else {
-                        this.addLog(`❌ Multi-Account Switch FAILED: Expected active session @${targetUser}, but Instagram active account is @${currentActive || 'unknown'}. Please make sure @${targetUser} is logged into Instagram Web.`, "error")
+                        this.addLog(`❌ Multi-Account Switch FAILED: Expected active session @${targetUser}, but Instagram active account is @${currentActive || 'unknown'}. Please make sure @${targetUser} is logged into Instagram Web.`, "warning")
                         await storage.set("isRunning", false)
                         this.active = false
                     }
@@ -1424,8 +1424,8 @@ class InstagramBot {
                 this.addLog(`Anti-Refollow Guard: Skipping @${user} (previously unfollowed on ${prevUnfollowed.dateStr})`, "info")
             } else {
                 const followKeywords = ['follow', 'seguir']
-                const btn = getVisibleProfileActionButtons().find((b) => {
-                    const { text, label, title } = getButtonSignals(b)
+                const btn = this.getVisibleProfileActionButtons().find((b) => {
+                    const { text, label, title } = this.getButtonSignals(b)
                     const combined = `${text} ${label} ${title}`
                     return followKeywords.some(keyword => combined.includes(keyword))
                 })

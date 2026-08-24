@@ -1081,9 +1081,11 @@ export async function getGrowthStat() {
  * DEEP SCAN: Fetch ALL followers from Instagram API (Paginated)
  */
 export async function runDeepScan(onProgress?: (count: number) => void) {
+    let stats: InstagramProfile | null = null
+    let followers: any[] = []
     try {
         console.log("IG API: Starting Deep Scan process...")
-        const stats = await getStoredCurrentUserProfile()
+        stats = await getStoredCurrentUserProfile()
         if (!stats?.id) {
             console.error("IG API: Deep Scan failed - No user ID in storage. stats:", stats)
             throw new Error("No user ID found. Please refresh profile first.")

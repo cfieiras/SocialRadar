@@ -291,6 +291,7 @@ function Dashboard() {
     const [lastSupabaseSync] = useStorage({ key: "lastSupabaseSync", instance: storage }, "")
     const safeCurrentAvatar = resolveStoredAvatarUrl(userStats) || `https://ui-avatars.com/api/?name=${encodeURIComponent(userStats?.username || "user")}&background=0f172a&color=fff`
     const sessionReportState = getSessionReportPresentation(isRunning, lastReport?.stopReason)
+    const SessionReportIcon = sessionReportState.Icon
 
     useEffect(() => {
         const today = new Date().toISOString().split('T')[0]
@@ -970,20 +971,23 @@ function Dashboard() {
                         { id: "history", label: "Historial de Interacciones", icon: Activity },
                         { id: "settings", label: "Settings", icon: Settings },
                         { id: "database", label: "Audience Database", icon: History },
-                    ].map((item) => (
-                        <button
-                            key={item.id}
-                            onClick={() => setActiveTab(item.id)}
-                            className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-300 group ${activeTab === item.id
-                                ? "bg-primary-600 shadow-xl shadow-primary-600/20 text-white translate-x-3"
-                                : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
-                                }`}
-                        >
-                            <item.icon className={`w-5 h-5 ${activeTab === item.id ? "text-white" : "group-hover:text-primary-400"}`} />
-                            <span className="font-bold tracking-tight">{item.label}</span>
-                            {item.beta && <BetaBadge className={`${activeTab === item.id ? "border-white/25 bg-white/15 text-white" : ""} ml-auto`} />}
-                        </button>
-                    ))}
+                    ].map((item) => {
+                            const ItemIcon = item.icon
+                            return (
+                                <button
+                                    key={item.id}
+                                    onClick={() => setActiveTab(item.id)}
+                                    className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-300 group ${activeTab === item.id
+                                        ? "bg-primary-600 shadow-xl shadow-primary-600/20 text-white translate-x-3"
+                                        : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
+                                        }`}
+                                >
+                                    <ItemIcon className={`w-5 h-5 ${activeTab === item.id ? "text-white" : "group-hover:text-primary-400"}`} />
+                                    <span className="font-bold tracking-tight">{item.label}</span>
+                                    {item.beta && <BetaBadge className={`${activeTab === item.id ? "border-white/25 bg-white/15 text-white" : ""} ml-auto`} />}
+                                </button>
+                            )
+                        })}
                 </nav>
 
                 <div className="mt-auto pt-8 border-t border-slate-800/50 space-y-4">
@@ -1089,7 +1093,7 @@ function Dashboard() {
                                     }
                                     
                                     // Remove 'post:' entries from ALL processedHistory to guarantee re-scraping
-                                    const allData = await chrome.storage.local.get(null)
+                                    const allData = await chrome.storage.local.get()
                                     for (const key of Object.keys(allData)) {
                                         if (key.endsWith("_processedHistory")) {
                                             let history = allData[key]
@@ -1120,25 +1124,39 @@ function Dashboard() {
                 </header>
 
                 <div className="p-12 space-y-12 relative z-10">
-                    {activeTab === "overview" && (
-                        <>
-                            {/* Profile Overview Card */}
-                            {userStats && (
+                    {activeTab === "overview" && (() => {
+                        const activeUsernameClean = currentUsername !== "global" ? currentUsername : (lastKnownUsername || "usuario")
+                        const effectiveUserStats = userStats || {
+                            username: activeUsernameClean,
+                            fullName: activeUsernameClean ? `@${activeUsernameClean}` : "Tu Cuenta",
+                            avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(activeUsernameClean)}&background=0f172a&color=fff`,
+                            bio: "Monitoreando inteligencia de la cuenta activa...",
+                            stats: {
+                                followers: displayStats?.follower_count || 0,
+                                following: displayStats?.following_count || 0,
+                                posts: displayStats?.posts_count || 0
+                            },
+                            latestPosts: [],
+                            isVerified: false,
+                            engagementRate: displayStats?.engagement_rate || 0,
+                            trustScore: displayStats?.account_trust_score || 0
+                        }
+
+                        return (
+                            <>
+                                {/* Profile Hero Command Center Header */}
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 flex items-center justify-between gap-8 animate-in fade-in slide-in-from-top-4 duration-500">
                                     <div className="flex items-center gap-6">
                                         <div className="relative">
                                             <div className="w-24 h-24 rounded-full p-[3px] bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 flex items-center justify-center overflow-hidden">
                                                 <img
-                                                    src={safeCurrentAvatar}
+                                                    src={resolveStoredAvatarUrl(effectiveUserStats) || `https://ui-avatars.com/api/?name=${encodeURIComponent(effectiveUserStats.username)}&background=0f172a&color=fff`}
                                                     className="w-full h-full rounded-full border-4 border-slate-950 object-cover"
                                                     alt="Avatar"
                                                     referrerPolicy="no-referrer"
-                                                    onError={(e) => {
-                                                        (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${userStats.username}&background=0f172a&color=fff`
-                                                    }}
                                                 />
                                             </div>
-                                            {userStats.isVerified && (
+                                            {effectiveUserStats.isVerified && (
                                                 <div className="absolute bottom-1 right-1 bg-blue-500 rounded-full p-1 border-2 border-slate-900">
                                                     <CheckCircle2 className="w-4 h-4 text-white fill-current" />
                                                 </div>
@@ -1146,37 +1164,42 @@ function Dashboard() {
                                         </div>
                                         <div>
                                             <div className="flex items-center gap-3">
-                                                <h3 className="text-3xl font-black text-white tracking-tight">{userStats.fullName || userStats.username}</h3>
-                                                <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-400 text-xs font-bold border border-slate-700">@{userStats.username}</span>
+                                                <h3 className="text-3xl font-black text-white tracking-tight">{effectiveUserStats.fullName || effectiveUserStats.username}</h3>
+                                                <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-400 text-xs font-bold border border-slate-700">@{effectiveUserStats.username}</span>
                                             </div>
-                                            <p className="text-slate-400 mt-2 max-w-xl text-sm leading-relaxed font-medium line-clamp-2">{userStats.bio}</p>
+                                            <p className="text-slate-400 mt-2 max-w-xl text-sm leading-relaxed font-medium line-clamp-2">{effectiveUserStats.bio}</p>
                                         </div>
                                     </div>
-                                    <div className="flex gap-12 bg-slate-950/50 p-8 rounded-3xl border border-slate-800">
+                                    <div className="flex gap-8 bg-slate-950/50 p-8 rounded-3xl border border-slate-800">
                                         <div className="text-center">
                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Followers</p>
-                                            <p className="text-3xl font-black text-white tracking-tighter">{Number(userStats.stats.followers).toLocaleString()}</p>
+                                            <p className="text-3xl font-black text-white tracking-tighter">{Number(effectiveUserStats.stats?.followers || 0).toLocaleString()}</p>
                                         </div>
                                         <div className="w-px h-12 bg-slate-800" />
                                         <div className="text-center">
                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Following</p>
-                                            <p className="text-3xl font-black text-white tracking-tighter">{Number(userStats.stats.following).toLocaleString()}</p>
+                                            <p className="text-3xl font-black text-white tracking-tighter">{Number(effectiveUserStats.stats?.following || 0).toLocaleString()}</p>
                                         </div>
                                         <div className="w-px h-12 bg-slate-800" />
                                         <div className="text-center">
                                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Posts</p>
-                                            <p className="text-3xl font-black text-white tracking-tighter">{Number(userStats.stats.posts).toLocaleString()}</p>
+                                            <p className="text-3xl font-black text-white tracking-tighter">{Number(effectiveUserStats.stats?.posts || 0).toLocaleString()}</p>
                                         </div>
-
+                                        <div className="w-px h-12 bg-slate-800" />
+                                        <div className="text-center">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Ratio</p>
+                                            <p className="text-3xl font-black text-emerald-400 tracking-tighter">
+                                                {effectiveUserStats.stats?.following ? (effectiveUserStats.stats.followers / effectiveUserStats.stats.following).toFixed(1) : "0"}x
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
-                            )}
 
                             {(isRunning || lastReport) && (
                                 <div className={`bg-slate-900/60 border ${sessionReportState.borderClass} rounded-[2rem] p-6 mb-8 flex items-center justify-between animate-in fade-in slide-in-from-top-4`}>
                                     <div className="flex items-center gap-6">
                                         <div className={`p-4 rounded-2xl ${sessionReportState.iconWrapClass}`}>
-                                            <sessionReportState.Icon className={`w-6 h-6 ${isRunning ? "animate-pulse" : ""}`} />
+                                            <SessionReportIcon className={`w-6 h-6 ${isRunning ? "animate-pulse" : ""}`} />
                                         </div>
                                         <div>
                                             <h4 className={`text-xs font-black uppercase tracking-widest ${sessionReportState.accentClass} mb-1`}>{sessionReportState.badgeLabel}</h4>
@@ -1209,12 +1232,12 @@ function Dashboard() {
 
 
                             {/* Active Account Performance Report */}
-                            {userStats && userStats.latestPosts && userStats.latestPosts.length > 0 && (() => {
-                                const accountFormats = calculateAccountFormatBreakdown(userStats.latestPosts)
+                            {effectiveUserStats && effectiveUserStats.latestPosts && effectiveUserStats.latestPosts.length > 0 ? (() => {
+                                const accountFormats = calculateAccountFormatBreakdown(effectiveUserStats.latestPosts)
                                 const totalAccPosts = accountFormats.reels.count + accountFormats.images.count + accountFormats.carousels.count || 1
-                                const sortedPosts = [...userStats.latestPosts].sort((a, b) => (b.likes + b.comments * 2) - (a.likes + a.comments * 2))
+                                const sortedPosts = [...effectiveUserStats.latestPosts].sort((a, b) => (b.likes + b.comments * 2) - (a.likes + a.comments * 2))
                                 const top3Posts = sortedPosts.slice(0, 3)
-                                const avgInteractions = userStats.latestPosts.reduce((acc: number, p: any) => acc + (p.likes || 0) + (p.comments || 0), 0) / userStats.latestPosts.length || 1
+                                const avgInteractions = effectiveUserStats.latestPosts.reduce((acc: number, p: any) => acc + (p.likes || 0) + (p.comments || 0), 0) / effectiveUserStats.latestPosts.length || 1
 
                                 return (
                                     <div className="space-y-8 animate-in fade-in slide-in-from-top-4 duration-500">
@@ -1230,18 +1253,18 @@ function Dashboard() {
                                                         <div>
                                                             <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Última Publicación</p>
                                                             <h4 className="text-2xl font-black text-white tracking-tight">
-                                                                {userStats.latestPosts[0]?.timestamp
-                                                                    ? `${Math.floor((Date.now() / 1000 - userStats.latestPosts[0].timestamp) / 3600)}h atrás`
+                                                                {effectiveUserStats.latestPosts[0]?.timestamp
+                                                                    ? `${Math.floor((Date.now() / 1000 - effectiveUserStats.latestPosts[0].timestamp) / 3600)}h atrás`
                                                                     : "N/A"}
                                                             </h4>
                                                         </div>
-                                                        {userStats.latestPosts.length >= 2 && (
+                                                        {effectiveUserStats.latestPosts.length >= 2 && (
                                                             <>
                                                                 <div className="w-px h-10 bg-slate-800" />
                                                                 <div>
                                                                     <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mb-1">Frecuencia de Posteo</p>
                                                                     <h4 className="text-2xl font-black text-white tracking-tight">
-                                                                        {((userStats.latestPosts[0].timestamp - userStats.latestPosts[userStats.latestPosts.length - 1].timestamp) / 3600 / 24 / userStats.latestPosts.length).toFixed(1)} <span className="text-sm text-slate-500 font-bold">días / post</span>
+                                                                        {((effectiveUserStats.latestPosts[0].timestamp - effectiveUserStats.latestPosts[effectiveUserStats.latestPosts.length - 1].timestamp) / 3600 / 24 / effectiveUserStats.latestPosts.length).toFixed(1)} <span className="text-sm text-slate-500 font-bold">días / post</span>
                                                                     </h4>
                                                                 </div>
                                                             </>
@@ -1376,7 +1399,25 @@ function Dashboard() {
                                         </div>
                                     </div>
                                 )
-                            })()}
+                            })() : (
+                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className="p-4 rounded-2xl bg-primary-500/10 text-primary-400">
+                                            <Activity className="w-8 h-8 animate-pulse" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-white font-black text-lg">Inteligencia de Publicaciones</h4>
+                                            <p className="text-slate-400 text-xs mt-1">El bot está recopilando las métricas de tus mejores posts y desglose de formatos para esta cuenta.</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={handleReloadInstagramAccount}
+                                        className="px-6 py-3 rounded-2xl bg-primary-600 hover:bg-primary-500 text-white font-black text-xs transition-all flex items-center gap-2"
+                                    >
+                                        <RefreshCw className="w-4 h-4" /> Actualizar Publicaciones
+                                    </button>
+                                </div>
+                            )}
 
 
 
@@ -1535,37 +1576,42 @@ function Dashboard() {
 
                             {/* Ratio Stats (Single Row) */}
                             <div className="grid grid-cols-1">
-                                {authorityStats.filter(s => s.label.includes("Ratio")).map((stat: any, idx) => (
-                                    <div
-                                        key={idx}
-                                        className={`bg-slate-900/40 border border-slate-800/50 p-6 rounded-[2rem] hover:border-amber-500/30 transition-all duration-500 flex items-center justify-between group`}
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <div className={`p-3 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
-                                                <stat.icon className="w-6 h-6" />
-                                            </div>
-                                            <div>
-                                                <h3 className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-0.5">{stat.label}</h3>
-                                                <p className="text-2xl font-black text-white tracking-tighter">{stat.value}</p>
-                                            </div>
-                                        </div>
+                                {authorityStats.filter(s => s.label.includes("Ratio")).map((stat: any, idx) => {
+                                    const StatIcon = stat.icon
+                                    return (
                                         <div
-                                            title={stat.tooltip}
-                                            className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest cursor-help ${stat.trendColor}`}
+                                            key={idx}
+                                            className={`bg-slate-900/40 border border-slate-800/50 p-6 rounded-[2rem] hover:border-amber-500/30 transition-all duration-500 flex items-center justify-between group`}
                                         >
-                                            {stat.trend}
+                                            <div className="flex items-center gap-4">
+                                                <div className={`p-3 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
+                                                    <StatIcon className="w-6 h-6" />
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-0.5">{stat.label}</h3>
+                                                    <p className="text-2xl font-black text-white tracking-tighter">{stat.value}</p>
+                                                </div>
+                                            </div>
+                                            <div
+                                                title={stat.tooltip}
+                                                className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest cursor-help ${stat.trendColor}`}
+                                            >
+                                                {stat.trend}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    )
+                                })}
                             </div>
 
                             <div className="grid grid-cols-3 gap-8">
-                                {performanceStats.map((stat: any, idx) => (
-                                    <div key={idx} className="bg-slate-900/40 border border-slate-800/50 p-8 rounded-[2.5rem] hover:border-primary-500/30 transition-all duration-500 group">
-                                        <div className="flex items-center justify-between mb-6">
-                                            <div className={`p-4 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
-                                                <stat.icon className="w-7 h-7" />
-                                            </div>
+                                {performanceStats.map((stat: any, idx) => {
+                                    const StatIcon = stat.icon
+                                    return (
+                                        <div key={idx} className="bg-slate-900/40 border border-slate-800/50 p-8 rounded-[2.5rem] hover:border-primary-500/30 transition-all duration-500 group">
+                                            <div className="flex items-center justify-between mb-6">
+                                                <div className={`p-4 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
+                                                    <StatIcon className="w-7 h-7" />
+                                                </div>
                                             {stat.action ? (
                                                 <button
                                                     onClick={stat.action}
@@ -1585,8 +1631,9 @@ function Dashboard() {
                                         <h3 className="text-slate-500 text-xs font-black uppercase tracking-[0.2em] mb-2">{stat.label}</h3>
                                         <p className="text-4xl font-black text-white tracking-tighter">{stat.value}</p>
                                     </div>
-                                ))}
-                            </div>
+                                )
+                            })}
+                        </div>
 
                             {/* Growth Chart Section */}
                             <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
@@ -1716,7 +1763,8 @@ function Dashboard() {
                                 </div>
                             </div>
                         </>
-                    )}
+                    )
+                })()}
 
                     {activeTab === "competitors" && (() => {
                         try {
@@ -2122,24 +2170,27 @@ function Dashboard() {
                                             { id: "followEnabled", label: "Smart Follow", icon: UserPlus, color: "text-blue-400" },
                                             { id: "unfollowEnabled", label: "Auto-Unfollow (Clean)", icon: Trash2, color: "text-amber-400" },
                                             { id: "dmEnabled", label: "Comments Auto-Pilot", icon: MessageSquare, color: "text-emerald-400", beta: true }
-                                        ].map(item => (
-                                            <button
-                                                key={item.id}
-                                                onClick={() => setConfig({ ...config, [item.id]: !config[item.id] })}
-                                                className={`w-full flex items-center justify-between p-6 rounded-2xl transition-all border ${config[item.id]
-                                                    ? "bg-slate-900 border-primary-500/50 shadow-lg shadow-primary-500/5"
-                                                    : "bg-slate-950/50 border-slate-800 opacity-50 grayscale"
-                                                    }`}
-                                            >
-                                                <div className="flex items-center gap-4">
-                                                    <item.icon className={`w-5 h-5 ${item.color}`} />
-                                                    <span className="font-bold text-white">{item.label}</span>
-                                                    {item.beta && <BetaBadge />}
-                                                </div>
-                                                {config[item.id] ? <CheckCircle2 className="w-6 h-6 text-primary-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
-                                                {item.label.includes("(Dev)") && <span className="absolute top-2 right-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-500 text-[8px] font-bold rounded uppercase">In Dev</span>}
-                                            </button>
-                                        ))}
+                                        ].map(item => {
+                                            const ItemIcon = item.icon
+                                            return (
+                                                <button
+                                                    key={item.id}
+                                                    onClick={() => setConfig({ ...config, [item.id]: !config[item.id] })}
+                                                    className={`w-full flex items-center justify-between p-6 rounded-2xl transition-all border ${config[item.id]
+                                                        ? "bg-slate-900 border-primary-500/50 shadow-lg shadow-primary-500/5"
+                                                        : "bg-slate-950/50 border-slate-800 opacity-50 grayscale"
+                                                        }`}
+                                                >
+                                                    <div className="flex items-center gap-4">
+                                                        <ItemIcon className={`w-5 h-5 ${item.color}`} />
+                                                        <span className="font-bold text-white">{item.label}</span>
+                                                        {item.beta && <BetaBadge />}
+                                                    </div>
+                                                    {config[item.id] ? <CheckCircle2 className="w-6 h-6 text-primary-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
+                                                    {item.label.includes("(Dev)") && <span className="absolute top-2 right-2 px-2 py-0.5 bg-yellow-500/20 text-yellow-500 text-[8px] font-bold rounded uppercase">In Dev</span>}
+                                                </button>
+                                            )
+                                        })}
 
                                         <button
                                             onClick={() => setMultiAccountEnabled(!multiAccountEnabled)}
@@ -2165,23 +2216,26 @@ function Dashboard() {
                                             { id: "sourceHashtags", label: "Monitor Hashtags", icon: Search, color: "text-indigo-400" },
                                             { id: "sourceCompetitors", label: "Target Competitors", icon: Zap, color: "text-primary-400" },
                                             { id: "sourcePosts", label: "Specific Posts Targeting", icon: Heart, color: "text-rose-400", beta: true }
-                                        ].map(sourceItem => (
-                                            <button
-                                                key={sourceItem.id}
-                                                onClick={() => setConfig({ ...config, [sourceItem.id]: !config[sourceItem.id] })}
-                                                className={`w-full flex items-center justify-between p-6 rounded-2xl transition-all border ${config[sourceItem.id]
-                                                    ? "bg-slate-900 border-primary-500/50 shadow-lg shadow-primary-500/5"
-                                                    : "bg-slate-950/50 border-slate-800 opacity-50 grayscale"
-                                                    }`}
-                                            >
-                                                <div className="flex items-center gap-4">
-                                                    <sourceItem.icon className={`w-5 h-5 ${sourceItem.color}`} />
-                                                    <span className="font-bold text-white">{sourceItem.label}</span>
-                                                    {sourceItem.beta && <BetaBadge />}
-                                                </div>
-                                                {config[sourceItem.id] ? <CheckCircle2 className="w-6 h-6 text-primary-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
-                                            </button>
-                                        ))}
+                                        ].map(sourceItem => {
+                                            const SourceIcon = sourceItem.icon
+                                            return (
+                                                <button
+                                                    key={sourceItem.id}
+                                                    onClick={() => setConfig({ ...config, [sourceItem.id]: !config[sourceItem.id] })}
+                                                    className={`w-full flex items-center justify-between p-6 rounded-2xl transition-all border ${config[sourceItem.id]
+                                                        ? "bg-slate-900 border-primary-500/50 shadow-lg shadow-primary-500/5"
+                                                        : "bg-slate-950/50 border-slate-800 opacity-50 grayscale"
+                                                        }`}
+                                                >
+                                                    <div className="flex items-center gap-4">
+                                                        <SourceIcon className={`w-5 h-5 ${sourceItem.color}`} />
+                                                        <span className="font-bold text-white">{sourceItem.label}</span>
+                                                        {sourceItem.beta && <BetaBadge />}
+                                                    </div>
+                                                    {config[sourceItem.id] ? <CheckCircle2 className="w-6 h-6 text-primary-500" /> : <Circle className="w-6 h-6 text-slate-800" />}
+                                                </button>
+                                            )
+                                        })}
                                     </div>
                                 </div>
                             </div>
