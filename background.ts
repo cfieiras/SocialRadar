@@ -1,5 +1,5 @@
 import { Storage } from "@plasmohq/storage"
-import { refreshUserProfile, reportCriticalError, syncStatsToSupabase, type InstagramProfile } from "./lib/instagramApi"
+import { refreshUserProfile, reportCriticalError, syncStatsToSupabase, storeCurrentUserProfile, type InstagramProfile } from "./lib/instagramApi"
 
 const storage = new Storage()
 
@@ -19,21 +19,24 @@ async function ensureBackgroundState() {
 
 async function safeRefreshProfile() {
     try {
+        const currentHealth = (await storage.get("systemHealth")) as Record<string, any> || {}
         await storage.set("systemHealth", {
-            ...(await storage.get("systemHealth") || {}),
+            ...currentHealth,
             lastBackgroundRefreshAt: Date.now(),
             lastBackgroundRefreshStatus: "running"
         })
         await refreshUserProfile()
+        const updatedHealth = (await storage.get("systemHealth")) as Record<string, any> || {}
         await storage.set("systemHealth", {
-            ...(await storage.get("systemHealth") || {}),
+            ...updatedHealth,
             lastBackgroundRefreshAt: Date.now(),
             lastBackgroundRefreshStatus: "ok"
         })
     } catch (error) {
         console.error("SocialRadar: Failed to refresh profile in background", error)
+        const errHealth = (await storage.get("systemHealth")) as Record<string, any> || {}
         await storage.set("systemHealth", {
-            ...(await storage.get("systemHealth") || {}),
+            ...errHealth,
             lastBackgroundRefreshAt: Date.now(),
             lastBackgroundRefreshStatus: "error",
             lastBackgroundError: error instanceof Error ? error.message : String(error)
@@ -69,8 +72,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         // Reset daily counters for continuous sessions
         await storage.set("lastNavTime", 0)
         await storage.set("dailyResetTimestamp", Date.now())
+        const dailyResetHealth = (await storage.get("systemHealth")) as Record<string, any> || {}
         await storage.set("systemHealth", {
-            ...(await storage.get("systemHealth") || {}),
+            ...dailyResetHealth,
             lastDailyResetAt: Date.now()
         })
     }
@@ -93,9 +97,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return false
         }
 
-        void syncStatsToSupabase(payload)
-            .then(() => sendResponse({ ok: true }))
-            .catch((error) => {
+        (async () => {
+            try {
+                await storeCurrentUserProfile(payload)
+                await syncStatsToSupabase(payload)
+                sendResponse({ ok: true })
+            } catch (error) {
                 console.error("SocialRadar: SYNC_STATS failed", error)
                 void reportCriticalError({
                     area: "background_sync_stats_message",
@@ -104,7 +111,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     instagramUsername: payload.username
                 })
                 sendResponse({ ok: false, error: error instanceof Error ? error.message : "Unknown sync error" })
-            })
+            }
+        })()
 
         return true
     }

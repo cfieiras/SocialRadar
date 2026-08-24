@@ -116,17 +116,26 @@ class InstagramBot {
     }
 
     private extractHeaderAvatarUrl(header: Element | null): string {
+        const root = header || document.body
         const selectors = [
             'header img[alt*="profile" i]',
+            'main img[alt*="profile" i]',
             'header canvas + img',
+            'main canvas + img',
             'header img[crossorigin="anonymous"]',
-            'header img'
+            'header img',
+            'main img[src*="cdninstagram"]',
+            'main img[src*="fbcdn"]',
+            'img[alt*="foto de perfil" i]',
+            'img[alt*="profile picture" i]'
         ]
 
         for (const selector of selectors) {
-            const src = (header?.querySelector(selector) as HTMLImageElement | null)?.src
-            const sanitized = this.sanitizeImageUrl(src || "")
-            if (sanitized) return sanitized
+            const imgEl = root.querySelector(selector) as HTMLImageElement | null
+            if (imgEl && imgEl.src) {
+                const src = this.sanitizeImageUrl(imgEl.src)
+                if (src && !src.includes("ui-avatars.com")) return src
+            }
         }
 
         return ""
@@ -374,7 +383,7 @@ class InstagramBot {
         }
 
         if (!switchOption) {
-            this.addLog("Failed to find 'Cambiar de cuenta' option in Instagram menu.", "error")
+            this.addLog("Failed to find 'Cambiar de cuenta' option in Instagram menu.", "warning")
             await storage.set("isRunning", false)
             this.active = false
             this._loopRunning = false
@@ -422,7 +431,7 @@ class InstagramBot {
 
         if (!targetBtn) {
             const visibleText = modalTextDump.slice(0, 10).join(" | ")
-            this.addLog(`Account @${cleanTarget} not found in Switcher list. Visible items: [${visibleText}]`, "error")
+            this.addLog(`Account @${cleanTarget} not found in Switcher list. Visible items: [${visibleText}]`, "warning")
             await storage.set("isRunning", false)
             this.active = false
             this._loopRunning = false
@@ -615,7 +624,7 @@ class InstagramBot {
                             await this.navigateToNextTarget()
                         }
                     } else {
-                        this.addLog(`❌ Multi-Account Switch FAILED: Expected active session @${targetUser}, but Instagram active account is @${currentActive || 'unknown'}. Please make sure @${targetUser} is logged into Instagram Web.`, "error")
+                        this.addLog(`❌ Multi-Account Switch FAILED: Expected active session @${targetUser}, but Instagram active account is @${currentActive || 'unknown'}. Please make sure @${targetUser} is logged into Instagram Web.`, "warning")
                         await storage.set("isRunning", false)
                         this.active = false
                     }
@@ -1424,8 +1433,8 @@ class InstagramBot {
                 this.addLog(`Anti-Refollow Guard: Skipping @${user} (previously unfollowed on ${prevUnfollowed.dateStr})`, "info")
             } else {
                 const followKeywords = ['follow', 'seguir']
-                const btn = getVisibleProfileActionButtons().find((b) => {
-                    const { text, label, title } = getButtonSignals(b)
+                const btn = this.getVisibleProfileActionButtons().find((b) => {
+                    const { text, label, title } = this.getButtonSignals(b)
                     const combined = `${text} ${label} ${title}`
                     return followKeywords.some(keyword => combined.includes(keyword))
                 })
@@ -1844,9 +1853,11 @@ class InstagramBot {
             // Use intercepted user data if available, otherwise fallback to DOM
             // If in DEEP mode, we PRESERVE existing metadata as per requirement
             const finalFullName = (mode === 'deep' && existingStats.fullName) ? existingStats.fullName : (interceptedUser?.full_name || interceptedUser?.fullName || domFullName || existingStats.fullName || username)
-            const finalAvatarUrl = (mode === 'deep' && existingStats.avatarUrl)
-                ? this.sanitizeImageUrl(existingStats.avatarUrl)
-                : extractBestAvatarUrl(interceptedUser, avatarUrl || existingStats.avatarUrl)
+            const scrapedAvatar = extractBestAvatarUrl(interceptedUser, avatarUrl)
+            const finalAvatarUrl = (scrapedAvatar && !scrapedAvatar.includes("ui-avatars.com"))
+                ? scrapedAvatar
+                : extractBestAvatarUrl(interceptedUser, existingStats.avatarUrl || avatarUrl)
+
             const finalBio = (mode === 'deep' && existingStats.bio) ? existingStats.bio : (interceptedUser?.biography || interceptedUser?.bio || domBio || existingStats.bio || "")
             const finalIsVerified = (mode === 'deep' && existingStats.isVerified !== undefined) ? existingStats.isVerified : (interceptedUser?.is_verified ?? (header?.querySelector('svg[aria-label="Verified"]') ? true : (existingStats.isVerified ?? false)))
 
@@ -1866,16 +1877,20 @@ class InstagramBot {
             let scavengedPosts = "0", scavengedFollowers = "0", scavengedFollowing = "0"
             statsItems.forEach(item => {
                 const text = item.textContent?.toLowerCase() || ""
-                if (text.includes("post")) scavengedPosts = parseStatText(item)
-                else if (text.includes("follower")) scavengedFollowers = parseStatText(item)
-                else if (text.includes("following")) scavengedFollowing = parseStatText(item)
+                if (text.includes("post") || text.includes("publicaci")) scavengedPosts = parseStatText(item)
+                else if (text.includes("follower") || text.includes("seguidor")) scavengedFollowers = parseStatText(item)
+                else if (text.includes("following") || text.includes("seguido")) scavengedFollowing = parseStatText(item)
             })
 
             const totalPostsCurrent = interceptedPosts ? interceptedPosts.toString() : (scavengedPosts !== "0" ? scavengedPosts : (statsItems[0] ? parseStatText(statsItems[0]) : "0"))
             const followersCurrent = interceptedFollowers ? interceptedFollowers.toString() : (scavengedFollowers !== "0" ? scavengedFollowers : (statsItems[1] ? parseStatText(statsItems[1]) : "0"))
             const followingCurrent = interceptedFollowing ? interceptedFollowing.toString() : (scavengedFollowing !== "0" ? scavengedFollowing : (statsItems[2] ? parseStatText(statsItems[2]) : "0"))
 
-            this.addLog(`ðŸ“Š Data Results: Posts=${totalPostsCurrent}, Followers=${followersCurrent}`, "success")
+            this.addLog(`📊 Data Results: Posts=${totalPostsCurrent}, Followers=${followersCurrent}`, "success")
+
+            const parsedPosts = totalPostsCurrent !== "0" ? this.parseAbbreviatedNumber(totalPostsCurrent) : (Number(existingStats.stats?.posts) || 0)
+            const parsedFollowers = followersCurrent !== "0" ? this.parseAbbreviatedNumber(followersCurrent) : (Number(existingStats.stats?.followers) || 0)
+            const parsedFollowing = followingCurrent !== "0" ? this.parseAbbreviatedNumber(followingCurrent) : (Number(existingStats.stats?.following) || 0)
 
             const profileData = {
                 ...existingStats,
@@ -1885,23 +1900,12 @@ class InstagramBot {
                 bio: finalBio,
                 isVerified: finalIsVerified,
                 stats: {
-                    ...existingStats.stats,
-                    // Conservative update: Preserve only if new is "0" and old is valid.
-                    // Also respect the "mode === deep" requirement to not update stats unless they are currently missing.
-                    posts: (mode === 'deep' && existingStats.stats?.posts && existingStats.stats?.posts !== "0")
-                        ? existingStats.stats.posts
-                        : (totalPostsCurrent !== "0" ? this.parseAbbreviatedNumber(totalPostsCurrent).toString() : (existingStats.stats?.posts || "0")),
-
-                    followers: (mode === 'deep' && existingStats.stats?.followers && existingStats.stats?.followers !== "0")
-                        ? existingStats.stats.followers
-                        : (followersCurrent !== "0" ? this.parseAbbreviatedNumber(followersCurrent).toString() : (existingStats.stats?.followers || "0")),
-
-                    following: (mode === 'deep' && existingStats.stats?.following && existingStats.stats?.following !== "0")
-                        ? existingStats.stats.following
-                        : (followingCurrent !== "0" ? this.parseAbbreviatedNumber(followingCurrent).toString() : (existingStats.stats?.following || "0"))
+                    posts: parsedPosts,
+                    followers: parsedFollowers,
+                    following: parsedFollowing
                 },
                 timestamp: Date.now(),
-                latestPosts: latestPosts // Sample of up to 12 for performance analysis
+                latestPosts: (latestPosts && latestPosts.length > 0) ? latestPosts : (existingStats.latestPosts || [])
             }
 
             // 4. Calculate Engagement

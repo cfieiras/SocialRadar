@@ -44,19 +44,24 @@ export function sanitizeImageUrl(url?: string | null): string {
 }
 
 export function extractBestAvatarUrl(user?: Record<string, any> | null, fallbackUrl?: string | null): string {
+    const rawFallback = (fallbackUrl && !fallbackUrl.includes("ui-avatars.com")) ? fallbackUrl : ""
     const candidate = user?.profile_pic_url_hd ||
         user?.profile_pic_url ||
         user?.profilePicUrl ||
         user?.hd_profile_pic_url_info?.url ||
         user?.profile_pic_url_info?.url ||
-        fallbackUrl ||
+        user?.avatarUrl ||
+        user?.avatarDisplayUrl ||
+        rawFallback ||
         ""
 
     return sanitizeImageUrl(candidate)
 }
 
 export function resolveStoredAvatarUrl(profile?: Pick<InstagramProfile, "avatarDisplayUrl" | "avatarUrl"> | null): string {
-    return sanitizeImageUrl(profile?.avatarDisplayUrl || profile?.avatarUrl || "")
+    const candidate = profile?.avatarDisplayUrl || profile?.avatarUrl || ""
+    if (!candidate || candidate.includes("ui-avatars.com")) return ""
+    return sanitizeImageUrl(candidate)
 }
 
 export interface InstagramProfile {
@@ -342,6 +347,7 @@ export async function syncAccountSettingsToSupabase(instagramUsername: string, s
     targetCompetitors?: string[]
     targetPostUrls?: string[]
     commentTemplates?: string[]
+    profileData?: InstagramProfile
 }): Promise<boolean> {
     if (!instagramUsername) return false
     try {
@@ -349,10 +355,15 @@ export async function syncAccountSettingsToSupabase(instagramUsername: string, s
         if (!session?.user?.id) return false
 
         const cleanUsername = instagramUsername.toLowerCase()
+        const configPayload = { ...settings.config }
+        if (settings.profileData) {
+            configPayload._cachedProfile = settings.profileData
+        }
+
         const payload = {
             user_id: session.user.id,
             instagram_username: cleanUsername,
-            config: settings.config || {},
+            config: configPayload,
             delays: settings.delays || {},
             target_hashtags: settings.targetHashtags || [],
             target_competitors: settings.targetCompetitors || [],
@@ -397,10 +408,40 @@ export async function fetchAccountSettingsFromSupabase(instagramUsername: string
             targetHashtags: data.target_hashtags,
             targetCompetitors: data.target_competitors,
             targetPostUrls: data.target_post_urls,
-            commentTemplates: data.comment_templates
+            commentTemplates: data.comment_templates,
+            profileData: data.config?._cachedProfile || null
         }
     } catch (error) {
         console.warn("Account Settings DB: fetch pipeline failed", error)
+        return null
+    }
+}
+
+export async function syncFullProfileToSupabase(profile: InstagramProfile): Promise<boolean> {
+    if (!profile || !profile.username) return false
+    try {
+        await syncStatsToSupabase(profile)
+        const currentSettings = await fetchAccountSettingsFromSupabase(profile.username) || {}
+        return await syncAccountSettingsToSupabase(profile.username, {
+            ...currentSettings,
+            profileData: profile
+        })
+    } catch (e) {
+        console.warn("IG API: syncFullProfileToSupabase failed", e)
+        return false
+    }
+}
+
+export async function fetchFullProfileFromSupabase(instagramUsername: string): Promise<InstagramProfile | null> {
+    if (!instagramUsername) return null
+    try {
+        const settings = await fetchAccountSettingsFromSupabase(instagramUsername)
+        if (settings?.profileData) {
+            return settings.profileData as InstagramProfile
+        }
+        return null
+    } catch (e) {
+        console.warn("IG API: fetchFullProfileFromSupabase failed", e)
         return null
     }
 }
@@ -436,16 +477,28 @@ async function buildAvatarDisplayUrl(url?: string | null): Promise<string> {
 }
 
 export async function storeCurrentUserProfile<T extends InstagramProfile>(profile: T) {
-    const avatarUrl = extractBestAvatarUrl(profile, profile.avatarUrl)
-    const avatarDisplayUrl = await buildAvatarDisplayUrl(profile.avatarDisplayUrl || avatarUrl)
+    const existing = await getStoredCurrentUserProfile(profile.username)
+    let bestAvatar = extractBestAvatarUrl(profile, profile.avatarUrl || existing?.avatarUrl)
+
+    if ((!bestAvatar || bestAvatar.includes("ui-avatars.com")) && existing?.avatarUrl && !existing.avatarUrl.includes("ui-avatars.com")) {
+        bestAvatar = existing.avatarUrl
+    }
+
+    const latestPosts = (profile.latestPosts && profile.latestPosts.length > 0)
+        ? profile.latestPosts
+        : (existing?.latestPosts || [])
+
+    const avatarDisplayUrl = await buildAvatarDisplayUrl(profile.avatarDisplayUrl || bestAvatar)
     const enrichedProfile = {
         ...profile,
-        avatarUrl,
-        avatarDisplayUrl
+        avatarUrl: bestAvatar,
+        avatarDisplayUrl: avatarDisplayUrl || bestAvatar,
+        latestPosts
     }
 
     await storage.set("currentUserStats", enrichedProfile)
     await storage.set(accountKey(profile.username, "currentUserStats"), enrichedProfile)
+    void syncFullProfileToSupabase(enrichedProfile)
 }
 
 /**
@@ -469,7 +522,109 @@ export async function detectActiveUsername(): Promise<string | null> {
     } catch (e) {
         console.warn("IG API: Username detection fetch failed", e)
     }
-    return null
+}
+
+function parseAbbreviatedCount(str?: string | null): number {
+    if (!str) return 0
+    const clean = String(str).replace(/,/g, '').trim()
+    if (/k$/i.test(clean)) return Math.round(parseFloat(clean) * 1000)
+    if (/m$/i.test(clean)) return Math.round(parseFloat(clean) * 1000000)
+    if (/b$/i.test(clean)) return Math.round(parseFloat(clean) * 1000000000)
+    return parseInt(clean, 10) || 0
+}
+
+async function scrapeProfileFromHtml(username: string): Promise<InstagramProfile | null> {
+    try {
+        console.log(`IG API: Attempting HTML profile scrape for @${username}...`)
+        const existingProfile = (await getStoredCurrentUserProfile(username)) || (await fetchFullProfileFromSupabase(username))
+        const res = await fetch(`https://www.instagram.com/${username}/`, { credentials: 'include' })
+        if (!res.ok) return existingProfile || null
+        const html = await res.text()
+
+        let followers = existingProfile?.stats?.followers || 0
+        let following = existingProfile?.stats?.following || 0
+        let posts = existingProfile?.stats?.posts || 0
+        let fullName = existingProfile?.fullName || username
+        let bio = existingProfile?.bio || ""
+        let avatarUrl = extractBestAvatarUrl(null, existingProfile?.avatarUrl)
+
+        // 1. Meta Description Regex (Works on ALL Instagram public profiles)
+        const metaMatch = html.match(/content=["']([^"']*?Followers[^"']*?)["']/i) ||
+            html.match(/content=["']([^"']*?seguidores[^"']*?)["']/i) ||
+            html.match(/meta name=["']description["'] content=["']([^"']+)["']/i)
+
+        if (metaMatch) {
+            const desc = metaMatch[1]
+            const fMatch = desc.match(/([0-9.,KMBkmb]+)\s+(?:Followers|seguidores)/i)
+            const fgMatch = desc.match(/([0-9.,KMBkmb]+)\s+(?:Following|seguidos)/i)
+            const pMatch = desc.match(/([0-9.,KMBkmb]+)\s+(?:Posts|publicaciones)/i)
+
+            if (fMatch) followers = parseAbbreviatedCount(fMatch[1])
+            if (fgMatch) following = parseAbbreviatedCount(fgMatch[1])
+            if (pMatch) posts = parseAbbreviatedCount(pMatch[1])
+        }
+
+        // 2. Embedded JSON scripts
+        const scriptMatches = [...html.matchAll(/<script type="application\/json"[^>]*>(.*?)<\/script>/gs)]
+        for (const match of scriptMatches) {
+            try {
+                const parsed = JSON.parse(match[1])
+                const u = parsed?.graphql?.user || parsed?.require?.[0]?.[3]?.[0]?.user || parsed?.user
+                if (u) {
+                    if (u.full_name) fullName = u.full_name
+                    if (u.biography) bio = u.biography
+                    if (u.profile_pic_url_hd || u.profile_pic_url) avatarUrl = extractBestAvatarUrl(u, avatarUrl)
+                    if (u.edge_followed_by?.count) followers = u.edge_followed_by.count
+                    if (u.edge_follow?.count) following = u.edge_follow.count
+                    if (u.edge_owner_to_timeline_media?.count) posts = u.edge_owner_to_timeline_media.count
+                }
+            } catch (e) { }
+        }
+
+        // 3. Extract posts media shortcodes/urls
+        const postMatches = [...html.matchAll(/"shortcode":"([^"]+)".*?"display_url":"([^"]+)"/g)]
+        let latestPosts = postMatches.slice(0, 12).map((m, i) => ({
+            id: m[1] || `scraped_${i}`,
+            url: sanitizeImageUrl(m[2]),
+            likes: 0,
+            comments: 0,
+            timestamp: Date.now() / 1000,
+            shortcode: m[1]
+        }))
+
+        // Preserve existing posts if scraped posts have no likes/comments but existing posts do
+        if (latestPosts.length === 0 || !latestPosts.some(p => p.likes > 0)) {
+            if (existingProfile?.latestPosts && existingProfile.latestPosts.length > 0) {
+                latestPosts = existingProfile.latestPosts
+            }
+        }
+
+        const engagementRate = (existingProfile?.engagementRate && existingProfile.engagementRate > 0)
+            ? existingProfile.engagementRate
+            : 0
+
+        const trustScore = (existingProfile?.trustScore && existingProfile.trustScore > 0)
+            ? existingProfile.trustScore
+            : 50
+
+        return {
+            username,
+            fullName,
+            avatarUrl: extractBestAvatarUrl(null, avatarUrl || existingProfile?.avatarUrl),
+            bio,
+            stats: { followers, posts, following },
+            isVerified: existingProfile?.isVerified || false,
+            timestamp: Date.now(),
+            id: existingProfile?.id || `scraped_${username}`,
+            latestPosts,
+            engagementRate,
+            trustScore,
+            growthVelocity: existingProfile?.growthVelocity || 0
+        }
+    } catch (e) {
+        console.warn(`IG API: Scrape profile fallback failed for @${username}`, e)
+        return null
+    }
 }
 
 export async function refreshUserProfile(targetUsername?: string): Promise<InstagramProfile | null> {
@@ -498,22 +653,29 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         if (!username) return null
 
         // 2. Fetch full profile
-        const apiUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`
-        const response = await fetch(apiUrl, {
-            headers: {
-                'x-ig-app-id': '936619743392459',
-                'x-requested-with': 'XMLHttpRequest',
-                'x-csrftoken': csrfToken
-            },
-            credentials: 'include'
-        })
+        let user: any = null
+        try {
+            const apiUrl = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`
+            const response = await fetch(apiUrl, {
+                headers: {
+                    'x-ig-app-id': '936619743392459',
+                    'x-requested-with': 'XMLHttpRequest',
+                    'x-csrftoken': csrfToken
+                },
+                credentials: 'include'
+            })
 
-        if (!response.ok) return null
-        const resData = await response.json() // Renamed to avoid conflict with 'data' inside profile construction
-        const user = resData.data?.user
+            if (response.ok) {
+                const resData = await response.json()
+                user = resData.data?.user
+            }
+        } catch (e) {
+            console.warn(`IG API: web_profile_info failed for @${username}`, e)
+        }
+
         if (!user) {
-            console.error("IG API: No user found in response", resData)
-            return null
+            console.log(`IG API: web_profile_info returned no user for @${username}, falling back to HTML profile scraping...`)
+            return await scrapeProfileFromHtml(username)
         }
 
         console.log("IG API: Fetched user data for", user.username)
@@ -690,9 +852,9 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
             avatarUrl: extractBestAvatarUrl(user, avatarUrl || existingProfile?.avatarUrl || ""),
             bio: user.biography,
             stats: {
-                posts: user.edge_owner_to_timeline_media?.count || 0,
-                followers: user.edge_followed_by?.count || 0,
-                following: user.edge_follow?.count || 0
+                posts: Number(user.edge_owner_to_timeline_media?.count ?? user.edge_felix_combined_post_uploads?.count ?? user.media_count ?? user.posts_count ?? 0),
+                followers: Number(user.edge_followed_by?.count ?? user.follower_count ?? user.followers_count ?? 0),
+                following: Number(user.edge_follow?.count ?? user.following_count ?? 0)
             },
             isVerified: user.is_verified || false,
             timestamp: Date.now(),
@@ -707,7 +869,7 @@ export async function refreshUserProfile(targetUsername?: string): Promise<Insta
         if (!targetUsername) {
             await storeCurrentUserProfile(profileData)
             await updateLocalHistory(profileData)
-            // await syncStatsToSupabase(profileData) // Disabled auto-sync to prevents zeros. Manual sync only.
+            void syncFullProfileToSupabase(profileData)
         }
 
         return profileData
@@ -952,9 +1114,11 @@ export async function getGrowthStat() {
  * DEEP SCAN: Fetch ALL followers from Instagram API (Paginated)
  */
 export async function runDeepScan(onProgress?: (count: number) => void) {
+    let stats: InstagramProfile | null = null
+    let followers: any[] = []
     try {
         console.log("IG API: Starting Deep Scan process...")
-        const stats = await getStoredCurrentUserProfile()
+        stats = await getStoredCurrentUserProfile()
         if (!stats?.id) {
             console.error("IG API: Deep Scan failed - No user ID in storage. stats:", stats)
             throw new Error("No user ID found. Please refresh profile first.")
@@ -1132,6 +1296,51 @@ export function calculateCompetitorFormatBreakdown(competitorDataList: any[] = [
                 images.likes += likes
                 images.comments += comments
             }
+        }
+    }
+
+    return {
+        reels: {
+            count: reels.count,
+            avgLikes: reels.count > 0 ? Math.round(reels.likes / reels.count) : 0,
+            avgComments: reels.count > 0 ? Math.round(reels.comments / reels.count) : 0
+        },
+        images: {
+            count: images.count,
+            avgLikes: images.count > 0 ? Math.round(images.likes / images.count) : 0,
+            avgComments: images.count > 0 ? Math.round(images.comments / images.count) : 0
+        },
+        carousels: {
+            count: carousels.count,
+            avgLikes: carousels.count > 0 ? Math.round(carousels.likes / carousels.count) : 0,
+            avgComments: carousels.count > 0 ? Math.round(carousels.comments / carousels.count) : 0
+        }
+    }
+}
+
+export function calculateAccountFormatBreakdown(posts: any[] = []) {
+    let reels = { count: 0, likes: 0, comments: 0 }
+    let images = { count: 0, likes: 0, comments: 0 }
+    let carousels = { count: 0, likes: 0, comments: 0 }
+
+    for (const p of posts) {
+        if (!p) continue
+        const likes = Number(p.likes) || 0
+        const comments = Number(p.comments) || 0
+        const url = (p.url || "").toLowerCase()
+
+        if (url.includes('/reel/') || url.includes('/reels/')) {
+            reels.count++
+            reels.likes += likes
+            reels.comments += comments
+        } else if (p.isCarousel) {
+            carousels.count++
+            carousels.likes += likes
+            carousels.comments += comments
+        } else {
+            images.count++
+            images.likes += likes
+            images.comments += comments
         }
     }
 

@@ -274,16 +274,19 @@ function IndexPopup() {
           { icon: Heart, label: "Likes", val: stats?.likes || 0, color: "text-rose-400" },
           { icon: Zap, label: "Unfollows", val: stats?.unfollows || 0, color: "text-amber-400" },
           { icon: MessageSquare, label: "DMs", val: stats?.dms || 0, color: "text-emerald-400" },
-        ].map((item, idx) => (
-          <div
-            key={idx}
-            className="glass-morphism rounded-2xl p-4 flex flex-col items-center gap-2"
-          >
-            <item.icon className={`w-4 h-4 ${item.color}`} />
-            <span className="text-sm font-black">{item.val}</span>
-            <span className="text-[9px] text-slate-400 uppercase tracking-wider">{item.label}</span>
-          </div>
-        ))}
+        ].map((item, idx) => {
+          const ItemIcon = item.icon
+          return (
+            <div
+              key={idx}
+              className="glass-morphism rounded-2xl p-4 flex flex-col items-center gap-2"
+            >
+              <ItemIcon className={`w-4 h-4 ${item.color}`} />
+              <span className="text-sm font-black">{item.val}</span>
+              <span className="text-[9px] text-slate-400 uppercase tracking-wider">{item.label}</span>
+            </div>
+          )
+        })}
       </div>
 
       {/* Status Card */}
