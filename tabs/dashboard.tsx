@@ -1442,15 +1442,12 @@ function Dashboard() {
                                         </div>
                                         <div>
                                             <h4 className="text-white font-black text-lg">Inteligencia de Publicaciones</h4>
-                                            <p className="text-slate-400 text-xs mt-1">El bot está recopilando las métricas de tus mejores posts y desglose de formatos para esta cuenta.</p>
+                                            <p className="text-slate-400 text-xs mt-1">El bot recopilará automáticamente la inteligencia de tus mejores publicaciones al iniciar la rutina de automatización.</p>
                                         </div>
                                     </div>
-                                    <button
-                                        onClick={handleReloadInstagramAccount}
-                                        className="px-6 py-3 rounded-2xl bg-primary-600 hover:bg-primary-500 text-white font-black text-xs transition-all flex items-center gap-2"
-                                    >
-                                        <RefreshCw className="w-4 h-4" /> Actualizar Publicaciones
-                                    </button>
+                                    <div className="px-5 py-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-400 flex items-center gap-2">
+                                        <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Sincronización Automática
+                                    </div>
                                 </div>
                             )}
 
