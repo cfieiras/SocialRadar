@@ -1427,233 +1427,39 @@ function Dashboard() {
 
 
 
-                            <div className="grid grid-cols-2 gap-8">
-                                {/* Engagement Rate Unified Card */}
-                                <div className={`bg-slate-900/40 border ${isOutdated ? 'border-amber-500/30' : 'border-slate-800/50'} rounded-[2.5rem] p-8 relative overflow-hidden group hover:border-purple-500/30 transition-all duration-500`}>
-                                    <div className="flex items-start justify-between relative z-10 mb-8">
-                                        <div className="flex items-center gap-4">
-                                            <div className="p-4 rounded-2xl bg-slate-950 text-purple-400 group-hover:scale-110 transition-transform duration-500">
-                                                <Activity className="w-7 h-7" />
-                                            </div>
-                                            <div>
-                                                <h3 className="text-slate-500 text-xs font-black uppercase tracking-[0.2em] mb-1">Engagement Rate</h3>
-                                                <p className="text-4xl font-black text-white tracking-tighter">
-                                                    {erValue > 0 ? `${erValue}%` : "—"}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="flex flex-col items-end gap-2">
-                                            {isOutdated ? (
-                                                <div className="px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest bg-amber-500/10 text-amber-400 flex items-center gap-2">
-                                                    <AlertTriangle className="w-3 h-3" /> OUTDATED
-                                                </div>
-                                            ) : (
-                                                <div
-                                                    className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest ${erValue > 0 ? (erValue > 3 ? "bg-purple-500/10 text-purple-400" : "bg-slate-800 text-slate-400") : "bg-slate-900/50 text-slate-600"}`}
-                                                >
-                                                    {erValue > 0 ? (erValue > 3 ? "EXCELLENT" : "REGULAR") : "NO DATA"}
-                                                </div>
-                                            )}
-
-                                            <button
-                                                onClick={async () => {
-                                                    if (isOutdated) {
-                                                        const confirm = window.confirm("This will perform a deep analysis of your current profile. It may take a few seconds. Continue?")
-                                                        if (!confirm) return
-
-                                                        // Force fresh analysis
-                                                        const freshProfile = await refreshUserProfile()
-                                                        if (freshProfile) {
-                                                            await syncStatsToSupabase(freshProfile)
-                                                            setTimeout(() => {
-                                                                alert("Analysis updated & Synced successfully.")
-                                                                loadHistory()
-                                                                // Also update local state to reflect changes immediately
-                                                                // (The useStorage hook might handle this, but forcing a reload ensures it)
-                                                                window.location.reload()
-                                                            }, 1000)
-                                                        } else {
-                                                            alert("Failed to analyze profile. Please try again later.")
-                                                        }
-                                                    } else {
-                                                        setShowEngagementModal(true)
-                                                    }
-                                                }}
-                                                className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${isOutdated ? 'text-amber-500 hover:text-amber-400' : 'text-slate-500 hover:text-white'}`}
-                                            >
-                                                {isOutdated ? "SYNC NOW" : "ANALYSIS"} <ChevronRight className="w-3 h-3" />
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="h-32 w-full opacity-60 group-hover:opacity-100 transition-opacity relative z-0">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <AreaChart data={supabaseHistory.length > 0 ? supabaseHistory : []}>
-                                                <defs>
-                                                    <linearGradient id="colorEngUnified" x1="0" y1="0" x2="0" y2="1">
-                                                        <stop offset="5%" stopColor="#c084fc" stopOpacity={0.3} />
-                                                        <stop offset="95%" stopColor="#c084fc" stopOpacity={0} />
-                                                    </linearGradient>
-                                                </defs>
-                                                <Tooltip
-                                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', fontSize: '12px', color: '#f8fafc' }}
-                                                    itemStyle={{ color: '#c084fc', fontWeight: 'bold' }}
-                                                    labelFormatter={(label, payload) => payload[0]?.payload?.date || ''}
-                                                />
-                                                <Area type="monotone" dataKey="engagementRate" stroke="#c084fc" strokeWidth={3} fillOpacity={1} fill="url(#colorEngUnified)" />
-                                            </AreaChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-
-                                {/* Trust Score Unified Card */}
-                                <div className={`bg-slate-900/40 border ${isOutdated ? 'border-amber-500/30' : 'border-slate-800/50'} rounded-[2.5rem] p-8 relative overflow-hidden group hover:border-blue-500/30 transition-all duration-500`}>
-                                    <div className="flex items-start justify-between relative z-10 mb-8">
-                                        <div className="flex items-center gap-4">
-                                            <div className="p-4 rounded-2xl bg-slate-950 text-blue-500 group-hover:scale-110 transition-transform duration-500">
-                                                <Shield className="w-7 h-7" />
-                                            </div>
-                                            <div>
-                                                <h3 className="text-slate-500 text-xs font-black uppercase tracking-[0.2em] mb-1">Account Trust Score</h3>
-                                                <p className="text-4xl font-black text-white tracking-tighter">
-                                                    {trustValue > 0 ? trustValue : "—"}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="flex flex-col items-end gap-2">
-                                            {isOutdated ? (
-                                                <div className="px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest bg-amber-500/10 text-amber-400 flex items-center gap-2">
-                                                    <AlertTriangle className="w-3 h-3" /> OUTDATED
-                                                </div>
-                                            ) : (
-                                                <div
-                                                    className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest ${trustValue > 0 ? (trustValue > 70 ? "bg-blue-500/10 text-blue-400" : "bg-slate-800 text-slate-400") : "bg-slate-900/50 text-slate-600"}`}
-                                                >
-                                                    {trustValue > 0 ? (trustValue > 70 ? "HIGH TRUST" : "BUILDING") : "NO DATA"}
-                                                </div>
-                                            )}
-
-                                            <button
-                                                onClick={async () => {
-                                                    if (isOutdated) {
-                                                        const confirm = window.confirm("This will refresh your Trust Score analysis. Continue?")
-                                                        if (!confirm) return
-
-                                                        const freshProfile = await refreshUserProfile()
-                                                        if (freshProfile) {
-                                                            await syncStatsToSupabase(freshProfile)
-                                                            setTimeout(() => {
-                                                                alert("Trust Score updated & Synced.")
-                                                                loadHistory()
-                                                                window.location.reload()
-                                                            }, 1000)
-                                                        } else {
-                                                            alert("Failed to refresh profile.")
-                                                        }
-                                                    } else {
-                                                        setShowScoreModal(true)
-                                                    }
-                                                }}
-                                                className={`text-[10px] font-bold flex items-center gap-1 transition-colors ${isOutdated ? 'text-amber-500 hover:text-amber-400' : 'text-slate-500 hover:text-white'}`}
-                                            >
-                                                {isOutdated ? "SYNC NOW" : "DETAILS"} <ChevronRight className="w-3 h-3" />
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="h-32 w-full opacity-60 group-hover:opacity-100 transition-opacity relative z-0">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <AreaChart data={supabaseHistory.length > 0 ? supabaseHistory : []}>
-                                                <defs>
-                                                    <linearGradient id="colorTrustUnified" x1="0" y1="0" x2="0" y2="1">
-                                                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                                                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                                                    </linearGradient>
-                                                </defs>
-                                                <Tooltip
-                                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', fontSize: '12px', color: '#f8fafc' }}
-                                                    itemStyle={{ color: '#3b82f6', fontWeight: 'bold' }}
-                                                    labelFormatter={(label, payload) => payload[0]?.payload?.date || ''}
-                                                />
-                                                <Area type="monotone" dataKey="trustScore" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorTrustUnified)" />
-                                            </AreaChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Ratio Stats (Single Row) */}
-                            <div className="grid grid-cols-1">
-                                {authorityStats.filter(s => s.label.includes("Ratio")).map((stat: any, idx) => {
-                                    const StatIcon = stat.icon
-                                    return (
-                                        <div
-                                            key={idx}
-                                            className={`bg-slate-900/40 border border-slate-800/50 p-6 rounded-[2rem] hover:border-amber-500/30 transition-all duration-500 flex items-center justify-between group`}
-                                        >
-                                            <div className="flex items-center gap-4">
-                                                <div className={`p-3 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
-                                                    <StatIcon className="w-6 h-6" />
-                                                </div>
-                                                <div>
-                                                    <h3 className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-0.5">{stat.label}</h3>
-                                                    <p className="text-2xl font-black text-white tracking-tighter">{stat.value}</p>
-                                                </div>
-                                            </div>
-                                            <div
-                                                title={stat.tooltip}
-                                                className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest cursor-help ${stat.trendColor}`}
-                                            >
-                                                {stat.trend}
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-8">
-                                {performanceStats.map((stat: any, idx) => {
-                                    const StatIcon = stat.icon
-                                    return (
-                                        <div key={idx} className="bg-slate-900/40 border border-slate-800/50 p-8 rounded-[2.5rem] hover:border-primary-500/30 transition-all duration-500 group">
-                                            <div className="flex items-center justify-between mb-6">
-                                                <div className={`p-4 rounded-2xl bg-slate-950 group-hover:scale-110 transition-transform duration-500 ${stat.color}`}>
-                                                    <StatIcon className="w-7 h-7" />
-                                                </div>
-                                            {stat.action ? (
-                                                <button
-                                                    onClick={stat.action}
-                                                    className="px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest bg-slate-800 text-slate-400 hover:bg-rose-500/20 hover:text-rose-400 transition-all"
-                                                >
-                                                    {stat.trend}
-                                                </button>
-                                            ) : (
-                                                <div
-                                                    title={stat.tooltip}
-                                                    className={`px-4 py-1.5 rounded-full text-[10px] font-black tracking-widest cursor-help ${stat.trendColor ? stat.trendColor : (stat.trend.startsWith('+') ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-400')}`}
-                                                >
-                                                    {stat.trend}
-                                                </div>
-                                            )}
-                                        </div>
-                                        <h3 className="text-slate-500 text-xs font-black uppercase tracking-[0.2em] mb-2">{stat.label}</h3>
-                                        <p className="text-4xl font-black text-white tracking-tighter">{stat.value}</p>
-                                    </div>
-                                )
-                            })}
-                        </div>
-
-                            {/* Growth Chart Section */}
+                            {/* Growth Chart Section with Integrated Follower Metrics */}
                             <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
-                                <div className="flex items-center justify-between mb-10">
+                                <div className="flex items-center justify-between mb-8">
                                     <div>
-                                        <h3 className="text-xl font-black tracking-tight flex items-center gap-3">
+                                        <h3 className="text-xl font-black tracking-tight flex items-center gap-3 text-white">
                                             <Activity className="w-5 h-5 text-primary-500" />
-                                            Follower Growth Analysis
+                                            Análisis de Crecimiento de Seguidores
                                         </h3>
-                                        <p className="text-sm text-slate-500 font-medium">Historical performance audit for @{userStats?.username}</p>
+                                        <p className="text-sm text-slate-500 font-medium mt-1">
+                                            Histórico de evolución de la cuenta @{effectiveUserStats?.username || currentUsername}
+                                        </p>
                                     </div>
-                                    <div className="flex gap-4">
-                                        <div className="px-5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-400">
-                                            Last 30 Days
+                                    <div className="flex items-center gap-6">
+                                        <div className="bg-slate-950/80 border border-slate-800 p-4 rounded-2xl flex items-center gap-4">
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Seguidores Actuales</p>
+                                                <p className="text-2xl font-black text-white tracking-tight">
+                                                    {Number(effectiveUserStats.stats?.followers || 0).toLocaleString()}
+                                                </p>
+                                            </div>
+                                            <div className="w-px h-8 bg-slate-800" />
+                                            <div>
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Tendencia Hoy</p>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-black tracking-wider inline-block mt-0.5 ${
+                                                    calculateGrowth().startsWith('+')
+                                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                                        : calculateGrowth().startsWith('-')
+                                                            ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                                            : 'bg-slate-800 text-slate-400'
+                                                }`}>
+                                                    {calculateGrowth()} hoy
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
