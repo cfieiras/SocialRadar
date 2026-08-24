@@ -491,22 +491,46 @@ function Dashboard() {
         await setDashboardGuideSeen(true)
     }
 
-    // Restore profile intelligence from Supabase Cloud if local profile is empty/missing
+    // Listen for real-time SYNC_STATS messages from background or audit script
     useEffect(() => {
-        if (!currentUsername || currentUsername === "global") return
-        if (userStats && userStats.latestPosts && userStats.latestPosts.length > 0) return
+        const handleRuntimeMessage = (msg: any) => {
+            if (msg.action === "SYNC_STATS" && msg.payload?.username) {
+                console.log("Dashboard: Real-time SYNC_STATS message received!", msg.payload)
+                setAccountUserStats(msg.payload)
+                setGlobalUserStats(msg.payload)
+            }
+        }
+        chrome.runtime.onMessage.addListener(handleRuntimeMessage)
+        return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage)
+    }, [])
+
+    // Restore profile intelligence from storage or Supabase Cloud if local profile is empty/missing
+    useEffect(() => {
+        const activeUser = currentUsername !== "global" ? currentUsername : (lastKnownUsername || "")
+        if (!activeUser) return
 
         (async () => {
-            console.log(`Dashboard: Attempting to restore profile data for @${currentUsername} from Supabase Cloud...`)
-            const cloudProfile = await fetchFullProfileFromSupabase(currentUsername)
-            if (cloudProfile) {
-                console.log(`Dashboard: Restored profile data for @${currentUsername} from Supabase Cloud!`, cloudProfile)
+            const localKey = `${activeUser.toLowerCase()}_currentUserStats`
+            const storedProfile = (await storage.get<any>(localKey)) || (await storage.get<any>("currentUserStats"))
+            if (storedProfile && storedProfile.latestPosts && storedProfile.latestPosts.length > 0) {
+                if (!userStats || !userStats.latestPosts || userStats.latestPosts.length === 0) {
+                    setAccountUserStats(storedProfile)
+                    setGlobalUserStats(storedProfile)
+                }
+                return
+            }
+
+            console.log(`Dashboard: Attempting to restore profile data for @${activeUser} from Supabase Cloud...`)
+            const cloudProfile = await fetchFullProfileFromSupabase(activeUser)
+            if (cloudProfile && cloudProfile.latestPosts && cloudProfile.latestPosts.length > 0) {
+                console.log(`Dashboard: Restored profile data for @${activeUser} from Supabase Cloud!`, cloudProfile)
                 setAccountUserStats(cloudProfile)
                 setGlobalUserStats(cloudProfile)
-                await storage.set(`${currentUsername}_currentUserStats`, cloudProfile)
+                await storage.set(localKey, cloudProfile)
+                await storage.set("currentUserStats", cloudProfile)
             }
         })()
-    }, [currentUsername, userStats])
+    }, [currentUsername, lastKnownUsername])
 
     // Auto-refresh competitor profiles that have 0 followers or empty stats
     useEffect(() => {

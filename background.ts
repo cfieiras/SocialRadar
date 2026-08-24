@@ -1,5 +1,5 @@
 import { Storage } from "@plasmohq/storage"
-import { refreshUserProfile, reportCriticalError, syncStatsToSupabase, type InstagramProfile } from "./lib/instagramApi"
+import { refreshUserProfile, reportCriticalError, syncStatsToSupabase, storeCurrentUserProfile, type InstagramProfile } from "./lib/instagramApi"
 
 const storage = new Storage()
 
@@ -97,9 +97,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return false
         }
 
-        void syncStatsToSupabase(payload)
-            .then(() => sendResponse({ ok: true }))
-            .catch((error) => {
+        (async () => {
+            try {
+                await storeCurrentUserProfile(payload)
+                await syncStatsToSupabase(payload)
+                sendResponse({ ok: true })
+            } catch (error) {
                 console.error("SocialRadar: SYNC_STATS failed", error)
                 void reportCriticalError({
                     area: "background_sync_stats_message",
@@ -108,7 +111,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     instagramUsername: payload.username
                 })
                 sendResponse({ ok: false, error: error instanceof Error ? error.message : "Unknown sync error" })
-            })
+            }
+        })()
 
         return true
     }
