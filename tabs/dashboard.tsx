@@ -1434,22 +1434,7 @@ function Dashboard() {
                                         </div>
                                     </div>
                                 )
-                            })() : (
-                                <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 flex items-center justify-between">
-                                    <div className="flex items-center gap-4">
-                                        <div className="p-4 rounded-2xl bg-primary-500/10 text-primary-400">
-                                            <Activity className="w-8 h-8 animate-pulse" />
-                                        </div>
-                                        <div>
-                                            <h4 className="text-white font-black text-lg">Inteligencia de Publicaciones</h4>
-                                            <p className="text-slate-400 text-xs mt-1">El bot recopilará automáticamente la inteligencia de tus mejores publicaciones al iniciar la rutina de automatización.</p>
-                                        </div>
-                                    </div>
-                                    <div className="px-5 py-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs font-bold text-slate-400 flex items-center gap-2">
-                                        <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Sincronización Automática
-                                    </div>
-                                </div>
-                            )}
+                            })() : null}
 
 
 
