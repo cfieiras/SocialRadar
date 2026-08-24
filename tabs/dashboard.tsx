@@ -1150,10 +1150,16 @@ function Dashboard() {
                                         <div className="relative">
                                             <div className="w-24 h-24 rounded-full p-[3px] bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 flex items-center justify-center overflow-hidden">
                                                 <img
-                                                    src={resolveStoredAvatarUrl(effectiveUserStats) || `https://ui-avatars.com/api/?name=${encodeURIComponent(effectiveUserStats.username)}&background=0f172a&color=fff`}
+                                                    src={resolveStoredAvatarUrl(effectiveUserStats) || resolveStoredAvatarUrl(userStats) || `https://ui-avatars.com/api/?name=${encodeURIComponent(effectiveUserStats.username || "User")}&background=0f172a&color=fff`}
+                                                    onError={(e) => {
+                                                        const target = e.currentTarget
+                                                        const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(effectiveUserStats.username || "User")}&background=0f172a&color=fff`
+                                                        if (target.src !== fallbackUrl) {
+                                                            target.src = fallbackUrl
+                                                        }
+                                                    }}
                                                     className="w-full h-full rounded-full border-4 border-slate-950 object-cover"
                                                     alt="Avatar"
-                                                    referrerPolicy="no-referrer"
                                                 />
                                             </div>
                                             {effectiveUserStats.isVerified && (

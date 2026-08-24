@@ -477,16 +477,23 @@ async function buildAvatarDisplayUrl(url?: string | null): Promise<string> {
 }
 
 export async function storeCurrentUserProfile<T extends InstagramProfile>(profile: T) {
-    const avatarUrl = extractBestAvatarUrl(profile, profile.avatarUrl)
-    const avatarDisplayUrl = await buildAvatarDisplayUrl(profile.avatarDisplayUrl || avatarUrl)
+    const existing = await getStoredCurrentUserProfile(profile.username)
+    let bestAvatar = extractBestAvatarUrl(profile, profile.avatarUrl || existing?.avatarUrl)
+
+    if ((!bestAvatar || bestAvatar.includes("ui-avatars.com")) && existing?.avatarUrl && !existing.avatarUrl.includes("ui-avatars.com")) {
+        bestAvatar = existing.avatarUrl
+    }
+
+    const avatarDisplayUrl = await buildAvatarDisplayUrl(profile.avatarDisplayUrl || bestAvatar)
     const enrichedProfile = {
         ...profile,
-        avatarUrl,
-        avatarDisplayUrl
+        avatarUrl: bestAvatar,
+        avatarDisplayUrl: avatarDisplayUrl || bestAvatar
     }
 
     await storage.set("currentUserStats", enrichedProfile)
     await storage.set(accountKey(profile.username, "currentUserStats"), enrichedProfile)
+    void syncFullProfileToSupabase(enrichedProfile)
 }
 
 /**

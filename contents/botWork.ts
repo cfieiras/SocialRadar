@@ -116,17 +116,26 @@ class InstagramBot {
     }
 
     private extractHeaderAvatarUrl(header: Element | null): string {
+        const root = header || document.body
         const selectors = [
             'header img[alt*="profile" i]',
+            'main img[alt*="profile" i]',
             'header canvas + img',
+            'main canvas + img',
             'header img[crossorigin="anonymous"]',
-            'header img'
+            'header img',
+            'main img[src*="cdninstagram"]',
+            'main img[src*="fbcdn"]',
+            'img[alt*="foto de perfil" i]',
+            'img[alt*="profile picture" i]'
         ]
 
         for (const selector of selectors) {
-            const src = (header?.querySelector(selector) as HTMLImageElement | null)?.src
-            const sanitized = this.sanitizeImageUrl(src || "")
-            if (sanitized) return sanitized
+            const imgEl = root.querySelector(selector) as HTMLImageElement | null
+            if (imgEl && imgEl.src) {
+                const src = this.sanitizeImageUrl(imgEl.src)
+                if (src && !src.includes("ui-avatars.com")) return src
+            }
         }
 
         return ""
