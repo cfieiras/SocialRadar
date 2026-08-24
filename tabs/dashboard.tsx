@@ -1126,20 +1126,25 @@ function Dashboard() {
                 <div className="p-12 space-y-12 relative z-10">
                     {activeTab === "overview" && (() => {
                         const activeUsernameClean = currentUsername !== "global" ? currentUsername : (lastKnownUsername || "usuario")
-                        const effectiveUserStats = userStats || {
+                        const effectivePosts = (accountUserStats?.latestPosts && accountUserStats.latestPosts.length > 0)
+                            ? accountUserStats.latestPosts
+                            : ((globalUserStats?.latestPosts && globalUserStats.latestPosts.length > 0) ? globalUserStats.latestPosts : (userStats?.latestPosts || []))
+
+                        const effectiveUserStats = {
+                            ...(userStats || {}),
                             username: activeUsernameClean,
-                            fullName: activeUsernameClean ? `@${activeUsernameClean}` : "Tu Cuenta",
-                            avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(activeUsernameClean)}&background=0f172a&color=fff`,
-                            bio: "Monitoreando inteligencia de la cuenta activa...",
+                            fullName: userStats?.fullName || (activeUsernameClean ? `@${activeUsernameClean}` : "Tu Cuenta"),
+                            avatarUrl: resolveStoredAvatarUrl(userStats) || resolveStoredAvatarUrl(accountUserStats) || resolveStoredAvatarUrl(globalUserStats),
+                            bio: userStats?.bio || "Monitoreando inteligencia de la cuenta activa...",
                             stats: {
-                                followers: displayStats?.follower_count || 0,
-                                following: displayStats?.following_count || 0,
-                                posts: displayStats?.posts_count || 0
+                                followers: userStats?.stats?.followers || displayStats?.follower_count || 0,
+                                following: userStats?.stats?.following || displayStats?.following_count || 0,
+                                posts: userStats?.stats?.posts || displayStats?.posts_count || 0
                             },
-                            latestPosts: [],
-                            isVerified: false,
-                            engagementRate: displayStats?.engagement_rate || 0,
-                            trustScore: displayStats?.account_trust_score || 0
+                            latestPosts: effectivePosts,
+                            isVerified: userStats?.isVerified || false,
+                            engagementRate: userStats?.engagementRate || displayStats?.engagement_rate || 0,
+                            trustScore: userStats?.trustScore || displayStats?.account_trust_score || 0
                         }
 
                         return (

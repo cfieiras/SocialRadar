@@ -484,11 +484,16 @@ export async function storeCurrentUserProfile<T extends InstagramProfile>(profil
         bestAvatar = existing.avatarUrl
     }
 
+    const latestPosts = (profile.latestPosts && profile.latestPosts.length > 0)
+        ? profile.latestPosts
+        : (existing?.latestPosts || [])
+
     const avatarDisplayUrl = await buildAvatarDisplayUrl(profile.avatarDisplayUrl || bestAvatar)
     const enrichedProfile = {
         ...profile,
         avatarUrl: bestAvatar,
-        avatarDisplayUrl: avatarDisplayUrl || bestAvatar
+        avatarDisplayUrl: avatarDisplayUrl || bestAvatar,
+        latestPosts
     }
 
     await storage.set("currentUserStats", enrichedProfile)
