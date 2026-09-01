@@ -1571,43 +1571,65 @@ class InstagramBot {
             return !forbidden.has(clean.toLowerCase()) && clean.toLowerCase() !== myUsername
         }
 
-        // 1. Extract Commenters (with auto-scroll and load more button)
+        // Detect post author so we don't treat the author as a commenter
+        let postAuthor = ""
+        const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') || ''
+        const docTitle = document.title || ''
+        for (const t of [ogTitle, docTitle]) {
+            const m1 = t.match(/\(@([a-zA-Z0-9._]+)\)/)
+            if (m1 && isValidUsername(m1[1])) { postAuthor = m1[1].toLowerCase(); break }
+            const m2 = t.match(/^([a-zA-Z0-9._]+)\s+on Instagram/i)
+            if (m2 && isValidUsername(m2[1])) { postAuthor = m2[1].toLowerCase(); break }
+        }
+
+        // 1. Extract Commenters (Universal scrolling + button expansion)
         this.addLog("💬 Leyendo y scroleando comentarios del post...", "info")
         try {
-            // Click "View more comments" / "+" / "Ver más comentarios" button if present
-            const moreCommentsButtons = Array.from(document.querySelectorAll('article button, article div[role="button"], article span[role="button"]')).filter(el => {
+            // Click "View more comments" / "Ver más comentarios" buttons
+            const expandButtons = Array.from(document.querySelectorAll('main button, main span[role="button"], main div[role="button"], article button, article span[role="button"]')).filter(el => {
+                if (el.closest('nav, aside, div[role="navigation"], header[role="banner"]')) return false
                 const t = (el.textContent || '').toLowerCase()
-                return (t.includes('comment') || t.includes('comentario') || t.includes('ver más') || t.includes('view more') || t.includes('load more')) && !el.closest('header')
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase()
+                const combined = `${t} ${aria}`
+                return combined.includes('comentario') || combined.includes('comment') || combined.includes('ver más') || combined.includes('view more') || combined.includes('load more') || combined.includes('respuestas') || combined.includes('replies')
             }) as HTMLElement[]
 
-            if (moreCommentsButtons.length > 0) {
-                try { moreCommentsButtons[0].click(); await this.sleep(2000) } catch (e) {}
+            for (const btn of expandButtons.slice(0, 5)) {
+                try { btn.click(); await this.sleep(1200) } catch (e) {}
             }
 
-            // Find comments scroll container or post article
-            const commentsContainer = document.querySelector('article ul, article div[style*="overflow-y: auto"], article div[style*="overflow"], main article') || document.querySelector('article')
-
-            // Scroll comments section 4 times to reveal lazy-loaded comments
-            for (let c = 0; c < 4; c++) {
-                const commentLinks = Array.from(
-                    document.querySelectorAll('article ul a[href], article a[role="link"], article div[style*="overflow"] a[href], article h2 a, article h3 a')
+            // Scroll loop over comments containers and window
+            for (let c = 0; c < 5; c++) {
+                // Find and extract all profile links inside the post content area
+                const candidateLinks = Array.from(
+                    document.querySelectorAll('main a[href], article a[href], div[role="main"] a[href], a[role="link"]')
                 ) as HTMLAnchorElement[]
 
-                for (const a of commentLinks) {
+                for (const a of candidateLinks) {
                     if (a.closest('nav, aside, div[role="navigation"], header[role="banner"]')) continue
                     const rawHref = a.getAttribute('href') || ''
-                    const text = (a.textContent || '').trim()
-                    const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+                    const text = (a.textContent || '').replace(/^@/, '').trim()
+                    const parts = rawHref.split('?')[0].split('#')[0].split('/').filter(Boolean)
+
                     if (parts.length === 1 && isValidUsername(parts[0])) {
-                        extractedUsers.add(parts[0].toLowerCase())
+                        const u = parts[0].toLowerCase()
+                        if (u !== postAuthor && u !== myUsername) extractedUsers.add(u)
                     } else if (isValidUsername(text)) {
-                        extractedUsers.add(text.toLowerCase())
+                        const u = text.toLowerCase()
+                        if (u !== postAuthor && u !== myUsername) extractedUsers.add(u)
                     }
                 }
 
-                if (commentsContainer) {
-                    commentsContainer.scrollBy({ top: 800, behavior: 'smooth' })
+                // Scroll all scrollable elements in main / article
+                const scrollables = Array.from(document.querySelectorAll('main div, article div, main ul, article ul, div[role="main"] div')).filter(el => {
+                    return (el as HTMLElement).scrollHeight > (el as HTMLElement).clientHeight && (el as HTMLElement).clientHeight > 80
+                }) as HTMLElement[]
+
+                for (const sc of scrollables) {
+                    try { sc.scrollBy({ top: 800, behavior: 'smooth' }) } catch (e) {}
                 }
+                try { window.scrollBy({ top: 600, behavior: 'smooth' }) } catch (e) {}
+
                 await this.sleep(1200)
             }
         } catch (e) {
