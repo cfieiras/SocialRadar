@@ -1186,7 +1186,18 @@ class InstagramBot {
     async navigateToNextTarget() {
         const langParam = "hl=en"
 
-        // 1. High-Priority: Check if we have queued audience users from a scraped post
+        // 0. High-Priority: Check if all daily limits have been completed
+        if (this.areAllDailyLimitsReached()) {
+            if (this.config.continuousSession) {
+                this.addLog("🔄 Todos los límites diarios alcanzados para hoy. Sesión Continua en pausa hasta mañana.", "wait")
+                return
+            } else {
+                await this.stopBot("Todos los límites diarios alcanzados para hoy")
+                return
+            }
+        }
+
+        // 1. Check if we have queued audience users from a scraped post
         const audienceQueue = await storage.get<string[]>(this.pKey("postAudienceQueue")) || []
         const validQueue = audienceQueue.map(u => (u || '').trim()).filter(Boolean)
 
@@ -1486,31 +1497,41 @@ class InstagramBot {
         this.sessionEngagedProfiles.add(cleanUrl)
 
         // 1. Follow action on profile if enabled
+        const followLimit = this.delayConfig.sessionFollowLimit || 100
         if (this.config.followEnabled) {
-            const prevUnfollowed = (this.interactionHistory || []).find(r => r.username.toLowerCase() === user.toLowerCase() && r.action === 'unfollow')
-            if (prevUnfollowed) {
-                this.addLog(`Anti-Refollow Guard: Skipping @${user} (previously unfollowed on ${prevUnfollowed.dateStr})`, "info")
+            if (this.sessionFollows >= followLimit) {
+                this.addLog(`ℹ️ Límite diario de Follows alcanzado (${this.sessionFollows}/${followLimit}). Omitiendo follow a @${user}...`, "info")
             } else {
-                const followKeywords = ['follow', 'seguir']
-                const btn = this.getVisibleProfileActionButtons().find((b) => {
-                    const { text, label, title } = this.getButtonSignals(b)
-                    const combined = `${text} ${label} ${title}`
-                    return followKeywords.some(keyword => combined.includes(keyword))
-                })
-                if (btn) {
-                    (btn as HTMLElement).click()
-                    this.stats.follows++
-                    this.sessionFollows++
-                    await storage.set(this.pKey("stats"), this.stats)
-                    await storage.set(this.pKey("sessionFollows"), this.sessionFollows)
-                    await this.saveFollowedTarget(user, cleanUrl)
-                    this.addLog(`>>> SUCCESS: Followed @${user}`, "success")
+                const prevUnfollowed = (this.interactionHistory || []).find(r => r.username.toLowerCase() === user.toLowerCase() && r.action === 'unfollow')
+                if (prevUnfollowed) {
+                    this.addLog(`Anti-Refollow Guard: Skipping @${user} (previously unfollowed on ${prevUnfollowed.dateStr})`, "info")
+                } else {
+                    const followKeywords = ['follow', 'seguir']
+                    const btn = this.getVisibleProfileActionButtons().find((b) => {
+                        const { text, label, title } = this.getButtonSignals(b)
+                        const combined = `${text} ${label} ${title}`
+                        return followKeywords.some(keyword => combined.includes(keyword))
+                    })
+                    if (btn) {
+                        (btn as HTMLElement).click()
+                        this.stats.follows++
+                        this.sessionFollows++
+                        await storage.set(this.pKey("stats"), this.stats)
+                        await storage.set(this.pKey("sessionFollows"), this.sessionFollows)
+                        await this.saveFollowedTarget(user, cleanUrl)
+                        this.addLog(`>>> SUCCESS: Followed @${user} (${this.sessionFollows}/${followLimit})`, "success")
+                    }
                 }
             }
         }
 
-        // 2. Open post for Like / Comment if enabled
-        if (this.config.likeEnabled || this.config.dmEnabled) {
+        // 2. Open post for Like / Comment if enabled and under limits
+        const likeLimit = this.delayConfig.sessionLikeLimit || 100
+        const commentLimit = this.delayConfig.sessionCommentLimit || 25
+        const canLike = this.config.likeEnabled && this.sessionLikes < likeLimit
+        const canComment = this.config.dmEnabled && this.sessionComments < commentLimit
+
+        if (canLike || canComment) {
             const post = document.querySelector('article a[href*="/p/"], main a[href*="/p/"]') as HTMLElement
             if (post) {
                 this.addLog(`Opening latest post for @${user}...`, "info")
@@ -1822,8 +1843,9 @@ class InstagramBot {
         }
 
         if (this.config.likeEnabled) {
-            if (this.sessionLikes >= (this.delayConfig.sessionLikeLimit || 100)) {
-                // Like limit reached for today - skip like action but continue to follow/comment
+            const likeLimit = this.delayConfig.sessionLikeLimit || 100
+            if (this.sessionLikes >= likeLimit) {
+                this.addLog(`ℹ️ Límite diario de Likes alcanzado (${this.sessionLikes}/${likeLimit}). Omitiendo like...`, "info")
             } else {
                 let likeBtn: HTMLElement | null = null
                 let isAlreadyLiked = false
@@ -1882,7 +1904,7 @@ class InstagramBot {
                     await storage.set(this.pKey("stats"), this.stats)
                     await storage.set(this.pKey("sessionLikes"), this.sessionLikes)
                     if (profileName) await this.recordInteraction(profileName, "like", profileUrl || window.location.href, "Automated Post Like")
-                    this.addLog(`❤️ Post Like exitoso${profileName ? ` a @${profileName}` : ''}`, "success")
+                    this.addLog(`❤️ Post Like exitoso${profileName ? ` a @${profileName}` : ''} (${this.sessionLikes}/${likeLimit})`, "success")
                     interacted = true
                 }
             }
