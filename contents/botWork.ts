@@ -990,7 +990,7 @@ class InstagramBot {
     private getCommentTemplates(): string[] {
         return [
             "Great post, thanks for sharing!",
-            "Really solid content ðŸ‘",
+            "Really solid content 👍",
             "Love this perspective!",
             "Super useful. Keep it up!"
         ]
@@ -1029,7 +1029,7 @@ class InstagramBot {
 
                 // --- SLEEP MODE CHECK ---
                 if (this.isSleepTime()) {
-                    this.addLog("ðŸ’¤ Modo Dormir ACTIVADO. El bot descansarÃ¡ hasta que termine la ventana de sueÃ±o.", "wait")
+                    this.addLog("💤 Modo Dormir ACTIVADO. El bot descansará hasta que termine la ventana de sueño.", "wait")
                     this.removeStatusOverlay()
                     // Re-check every 15 minutes
                     await this.sleep(15 * 60 * 1000)
@@ -1071,7 +1071,7 @@ class InstagramBot {
                     if (!isProcessing) {
                         const myUsername = userStats?.username || await storage.get<string>("lastKnownUsername")
                         if (myUsername) {
-                            this.addLog("ðŸ›  Priority Maintenance: Daily Deep Audit required...", "wait")
+                            this.addLog("🛠️ Priority Maintenance: Daily Deep Audit required...", "wait")
                             await storage.set("lastNavTime", Date.now())
                             window.location.href = `https://www.instagram.com/${myUsername}/?mode=deep`
                             return // Break loop to navigate
@@ -1252,13 +1252,22 @@ class InstagramBot {
             }
         }
 
-        // If nothing was chosen, mission is complete. Check for continuous session mode
+        // If nothing was chosen because all source lists are empty or have no ready targets:
+        const totalSessionActions = this.sessionLikes + this.sessionFollows + this.sessionUnfollows + this.sessionComments
+
+        // If NO actions have been performed and no targets exist in any list, stop the bot clearly to prevent an infinite loop
+        if (totalSessionActions === 0) {
+            await this.stopBot("⚠️ No hay objetivos configurados: Agrega hashtags, competidores o URLs de posts en 'Strategy & Source'.")
+            return
+        }
+
+        // If continuous session mode is enabled and we had actions previously in this cycle:
         if (this.config.continuousSession) {
-            this.addLog("ðŸ”„ SesiÃ³n Continua activada. Reiniciando ciclo...", "success")
+            this.addLog("🔄 Sesión Continua activada. Reiniciando ciclo...", "success")
 
             // Show summary before continuing
-            const summary = `âœ… Ciclo completado:\nðŸ”¥ Likes: ${this.sessionLikes}\nðŸ‘¥ Follows: ${this.sessionFollows}\nðŸ‘‹ Unfollows: ${this.sessionUnfollows}\nðŸ’¬ Comments: ${this.sessionComments}\n\nðŸ”„ Reiniciando sesiÃ³n automÃ¡ticamente...`
-            this.addLog(summary.replace(/\n/g, " | "), "success")
+            const summary = `✅ Ciclo completado: | 🔥 Likes: ${this.sessionLikes} | 👥 Follows: ${this.sessionFollows} | 👋 Unfollows: ${this.sessionUnfollows} | 💬 Comments: ${this.sessionComments} | 🔄 Reiniciando sesión...`
+            this.addLog(summary, "success")
 
             // Reset session counters for the new cycle
             this.currentSessionActions = 0
@@ -1280,7 +1289,7 @@ class InstagramBot {
             await storage.remove(this.pKey("lastSessionReport"))
 
             // Wait a moment before continuing
-            await this.sleep(5000)
+            await this.sleep(10000)
 
             // Navigate to start a new cycle
             await this.navigateToNextTarget()
@@ -1701,7 +1710,7 @@ class InstagramBot {
             const isRun = await storage.get<boolean>("isRunning")
             if (!isRun) {
                 this.active = false
-                this.addLog("ðŸ›‘ Bot stopped manually during Chaos Mode.", "warning")
+                this.addLog("🛑 Bot stopped manually during Chaos Mode.", "warning")
                 return // Exit immediately, DO NOT reload
             }
 
