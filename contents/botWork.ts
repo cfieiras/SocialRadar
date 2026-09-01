@@ -1358,9 +1358,13 @@ class InstagramBot {
         await this.sleep(3500)
 
         const user = window.location.pathname.replace(/\//g, "").toLowerCase()
-        const isFollowedTarget = this.followedUsers.some(u => u.username.toLowerCase() === user && !u.protected)
+        const targetEntry = this.followedUsers.find(u => u.username.toLowerCase() === user && !u.protected)
+        const now = Date.now()
+        const threshold = (this.delayConfig.unfollowDays || 3) * 86400 * 1000
+        const isMaturedForUnfollow = !!targetEntry && (now - targetEntry.timestamp) > threshold
+        const isExplicitUnfollowMission = (this.currentMission || '').toLowerCase().includes('unfollow')
 
-        if (this.config.unfollowEnabled && isFollowedTarget) {
+        if (this.config.unfollowEnabled && targetEntry && (isExplicitUnfollowMission || isMaturedForUnfollow)) {
             this.addLog(`Processing Unfollow: @${user}...`, "info")
 
             const followingKeywords = ['following', 'siguiendo', 'requested', 'pendiente']
