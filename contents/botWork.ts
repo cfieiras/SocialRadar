@@ -253,6 +253,18 @@ class InstagramBot {
         }
     }
 
+    private areAllDailyLimitsReached(): boolean {
+        const likeLimit = this.delayConfig.sessionLikeLimit || 100
+        const followLimit = this.delayConfig.sessionFollowLimit || 100
+        const commentLimit = this.delayConfig.sessionCommentLimit || 25
+
+        const likeCap = this.config.likeEnabled ? (this.sessionLikes >= likeLimit) : true
+        const followCap = this.config.followEnabled ? (this.sessionFollows >= followLimit) : true
+        const commentCap = this.config.dmEnabled ? (this.sessionComments >= commentLimit) : true
+
+        return likeCap && followCap && commentCap
+    }
+
     private async handleAccountSwitch(newUsername: string, reason = "Instagram account changed during session") {
         const previousUsername = this.activeUsername
         if (this.active && this.runLoopAccountUsername && previousUsername !== newUsername) {
@@ -842,14 +854,19 @@ class InstagramBot {
         this.sessionStart = now
         await storage.set("botStartTime", now)
 
-        this.resetTransientSessionState()
-        this.sessionDayMarker = this.getSessionDayMarker()
+        const today = this.getSessionDayMarker()
+        if (!this.sessionDayMarker || this.sessionDayMarker !== today) {
+            this.resetTransientSessionState()
+            this.sessionDayMarker = today
 
-        await storage.set(this.pKey("sessionLikes"), 0)
-        await storage.set(this.pKey("sessionFollows"), 0)
-        await storage.set(this.pKey("sessionUnfollows"), 0)
-        await storage.set(this.pKey("sessionComments"), 0)
-        await storage.set(this.pKey("sessionDayMarker"), this.sessionDayMarker)
+            await storage.set(this.pKey("sessionLikes"), 0)
+            await storage.set(this.pKey("sessionFollows"), 0)
+            await storage.set(this.pKey("sessionUnfollows"), 0)
+            await storage.set(this.pKey("sessionComments"), 0)
+            await storage.set(this.pKey("sessionDayMarker"), this.sessionDayMarker)
+        } else {
+            this.addLog(`Reanudando sesión del día (${today}). Progreso -> Likes: ${this.sessionLikes}/${this.delayConfig.sessionLikeLimit || 100}, Follows: ${this.sessionFollows}/${this.delayConfig.sessionFollowLimit || 100}, Comments: ${this.sessionComments}/${this.delayConfig.sessionCommentLimit || 25}`, "info")
+        }
 
         this.removeStatusOverlay()
         if (this.config?.overlayEnabled !== false) {
@@ -1513,10 +1530,8 @@ class InstagramBot {
         const profileUrl = profileLink?.href?.split('?')[0].replace(/\/$/, "").toLowerCase() || ""
 
         if (this.config.likeEnabled) {
-            // Check Session Limits
             if (this.sessionLikes >= (this.delayConfig.sessionLikeLimit || 100)) {
-                await this.stopBot("Daily Like Limit reached")
-                return
+                // Like limit reached for today - skip like action but continue to follow/comment
             } else {
                 // Updated Like Selector
                 const heart = Array.from(container.querySelectorAll('svg')).find(s => {
@@ -1551,8 +1566,7 @@ class InstagramBot {
 
         if (this.config.followEnabled) {
             if (this.sessionFollows >= (this.delayConfig.sessionFollowLimit || 100)) {
-                await this.stopBot("Daily Follow Limit reached")
-                return
+                // Follow limit reached for today - skip follow action but continue
             } else {
                 const btns = Array.from(container.querySelectorAll('button'))
                 const btn = btns.find(b => {
@@ -1589,8 +1603,7 @@ class InstagramBot {
 
         if (this.config.dmEnabled) {
             if (this.sessionComments >= (this.delayConfig.sessionCommentLimit || 25)) {
-                await this.stopBot("Daily Comment Limit reached")
-                return
+                // Comment limit reached for today - skip comment action
             } else {
                 const posted = await this.tryPostComment(container)
                 if (posted) {
@@ -1601,6 +1614,15 @@ class InstagramBot {
                     if (profileName) await this.recordInteraction(profileName, "comment", profileUrl || window.location.href, "Comments Auto-Pilot")
                     interacted = true
                 }
+            }
+        }
+
+        if (this.areAllDailyLimitsReached()) {
+            if (this.config.continuousSession) {
+                this.addLog("🔄 Todos los límites diarios alcanzados para hoy. Sesión Continua en pausa hasta mañana.", "wait")
+            } else {
+                await this.stopBot("Todos los límites diarios alcanzados para hoy")
+                return
             }
         }
 
@@ -1699,12 +1721,12 @@ class InstagramBot {
 
         // Only reload if we finished naturally (time expired) and weren't stopped
         if (this.active) {
-            this.addLog("âš¡ HUMANIZATION COMPLETE: Resuming operations.", "success")
+            this.addLog("⚡ HUMANIZATION COMPLETE: Resuming operations.", "success")
             window.location.reload()
         }
     }
 
-    // --- NUEVO SISTEMA DE AUDITORÃA PROFESIONAL ---
+    // --- NUEVO SISTEMA DE AUDITORÍA PROFESIONAL ---
     private async analyzeOwnProfile() {
         try {
             const params = new URLSearchParams(window.location.search)
@@ -1722,9 +1744,9 @@ class InstagramBot {
                 this.showAuditOverlay()
             }
 
-            this.addLog(`ðŸ” Audit Mode (${mode.toUpperCase()}): Intercepting Metadata...`, "info")
+            this.addLog(`🔍 Audit Mode (${mode.toUpperCase()}): Intercepting Metadata...`, "info")
 
-            // RESET: Limpiamos los datos capturados anteriormente para que solo cuenten los de esta auditorÃ­a
+            // RESET: Limpiamos los datos capturados anteriormente para que solo cuenten los de esta auditoría
             this.capturedGraphQLData = []
 
             // 1. Trigger Network requests (Skip scroll if QUICK)
@@ -1753,7 +1775,7 @@ class InstagramBot {
             }
 
             // El interceptor ahora guarda los posts procesados en cada mensaje, 
-            // recolectamos los Ãºnicos de todas las capturas
+            // recolectamos los únicos de todas las capturas
             const uniquePosts = new Map()
             let interceptedUser = null
 
@@ -1830,13 +1852,13 @@ class InstagramBot {
                 const title = span?.getAttribute('title');
                 if (title) return title.replace(/[,.]/g, '');
 
-                // Extraer el texto crudo y limpiar cualquier cosa que no sea nÃºmero o abreviatura
+                // Extraer el texto crudo y limpiar cualquier cosa que no sea número o abreviatura
                 const rawText = span?.textContent?.trim() || item.textContent?.trim() || "0";
 
-                // Si el texto es puramente un nÃºmero (ej: "1234"), devolverlo
+                // Si el texto es puramente un número (ej: "1234"), devolverlo
                 if (/^\d+$/.test(rawText.replace(/[,.]/g, ''))) return rawText.replace(/[,.]/g, '');
 
-                // Busca nÃºmeros seguidos opcionalmente de K o M (ej: 1,234, 1.5M, 500K)
+                // Busca números seguidos opcionalmente de K o M (ej: 1,234, 1.5M, 500K)
                 const match = rawText.match(/[\d,.]+[KkMm]?/);
                 return match ? match[0] : "0";
             }
@@ -1973,7 +1995,7 @@ class InstagramBot {
                 })
             }
 
-            this.addLog(`âœ… Audit Complete: ${latestPosts.length} posts. ER: ${engagementRate.toFixed(2)}%`, "success")
+            this.addLog(`✅ Audit Complete: ${latestPosts.length} posts. ER: ${engagementRate.toFixed(2)}%`, "success")
 
             if (new URLSearchParams(window.location.search).get('audit') === 'true' || new URLSearchParams(window.location.search).get('start_audit') === 'true') {
                 // Send to Supabase via Background

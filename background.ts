@@ -3,6 +3,12 @@ import { refreshUserProfile, reportCriticalError, syncStatsToSupabase, storeCurr
 
 const storage = new Storage()
 
+function getMsUntilMidnight(): number {
+    const now = new Date()
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0)
+    return Math.max(1000, midnight.getTime() - now.getTime())
+}
+
 async function ensureBackgroundState() {
     const isRunning = await storage.get("isRunning")
     if (isRunning === undefined) await storage.set("isRunning", false)
@@ -13,8 +19,11 @@ async function ensureBackgroundState() {
     // Set up refresh alarm (every 12 hours)
     chrome.alarms.create("REFRESH_STATS", { periodInMinutes: 720 })
 
-    // Set up daily reset alarm for continuous sessions (every 24 hours at midnight)
-    chrome.alarms.create("DAILY_RESET", { periodInMinutes: 1440 })
+    // Set up daily reset alarm targeting local midnight
+    chrome.alarms.create("DAILY_RESET", {
+        when: Date.now() + getMsUntilMidnight(),
+        periodInMinutes: 1440
+    })
 }
 
 async function safeRefreshProfile() {
@@ -69,9 +78,20 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     
     if (alarm.name === "DAILY_RESET") {
         console.log("SocialRadar: Daily reset alarm - Preparing for new session day...")
-        // Reset daily counters for continuous sessions
         await storage.set("lastNavTime", 0)
         await storage.set("dailyResetTimestamp", Date.now())
+
+        const keys = await storage.getAll()
+        const today = new Date().toDateString()
+        for (const key of Object.keys(keys)) {
+            if (key.endsWith("_sessionLikes") || key.endsWith("_sessionFollows") || key.endsWith("_sessionUnfollows") || key.endsWith("_sessionComments")) {
+                await storage.set(key, 0)
+            }
+            if (key.endsWith("_sessionDayMarker")) {
+                await storage.set(key, today)
+            }
+        }
+
         const dailyResetHealth = (await storage.get("systemHealth")) as Record<string, any> || {}
         await storage.set("systemHealth", {
             ...dailyResetHealth,
