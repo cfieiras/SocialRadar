@@ -1538,23 +1538,56 @@ class InstagramBot {
         let profileName = ""
         let profileUrl = ""
 
+        const isValidUsername = (u: string) => {
+            if (!u) return false
+            const clean = u.replace(/^@/, '').trim()
+            if (clean.length < 1 || clean.length > 30) return false
+            if (!/^[a-zA-Z0-9._]+$/.test(clean)) return false
+            const forbidden = new Set([
+                'explore', 'direct', 'reels', 'stories', 'accounts', 'p', 'tv', 'reel',
+                'about', 'legal', 'help', 'privacy', 'terms', 'instagram', 'meta', 'threads', 'support'
+            ])
+            return !forbidden.has(clean.toLowerCase())
+        }
+
         const postArticle = container.querySelector('article') || (container.tagName === 'ARTICLE' ? container : null)
         const headerEl = postArticle?.querySelector('header') || container.querySelector('header')
 
-        const candidateLinks = Array.from(
-            (headerEl || postArticle || container).querySelectorAll('a[href]')
-        ) as HTMLAnchorElement[]
+        // First try to look inside post header for the author username
+        if (headerEl) {
+            const headerLinks = Array.from(headerEl.querySelectorAll('a[href]')) as HTMLAnchorElement[]
+            for (const a of headerLinks) {
+                const rawHref = a.getAttribute('href') || ''
+                const text = (a.textContent || '').trim()
+                const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+                if (parts.length === 1 && isValidUsername(parts[0])) {
+                    profileName = parts[0]
+                    profileUrl = `https://www.instagram.com/${parts[0]}`
+                    break
+                }
+                if (isValidUsername(text)) {
+                    profileName = text
+                    profileUrl = `https://www.instagram.com/${text}`
+                    break
+                }
+            }
+        }
 
-        const excludedSlugs = new Set(['', 'explore', 'direct', 'reels', 'stories', 'accounts', 'p', 'about', 'legal', 'help', 'privacy', 'terms', 'instagram'])
+        // Fallback: search inside article or container for valid username link
+        if (!profileName) {
+            const candidateLinks = Array.from(
+                (postArticle || container).querySelectorAll('a[href]')
+            ) as HTMLAnchorElement[]
 
-        for (const a of candidateLinks) {
-            const rawHref = a.getAttribute('href') || ''
-            const text = (a.textContent || '').trim()
-            const parts = rawHref.split('?')[0].split('/').filter(Boolean)
-            if (parts.length === 1 && !excludedSlugs.has(parts[0].toLowerCase()) && text.length > 0 && text.toLowerCase() !== 'instagram') {
-                profileName = parts[0]
-                profileUrl = `https://www.instagram.com/${parts[0]}`
-                break
+            for (const a of candidateLinks) {
+                const rawHref = a.getAttribute('href') || ''
+                const text = (a.textContent || '').trim()
+                const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+                if (parts.length === 1 && isValidUsername(parts[0]) && isValidUsername(text)) {
+                    profileName = parts[0]
+                    profileUrl = `https://www.instagram.com/${parts[0]}`
+                    break
+                }
             }
         }
 
