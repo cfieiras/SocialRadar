@@ -1125,7 +1125,12 @@ class InstagramBot {
                 }
                 else if (path.includes("/p/") || path.includes("/reels/")) {
                     await this.handlePostInteraction()
-                    continue
+                    // When on a direct post page (not a modal), move to next target to prevent infinite loop
+                    this.addLog("Post interaction processed. Moving to next target...", "info")
+                    await storage.set("lastNavTime", 0)
+                    await this.sleep(3000)
+                    await this.navigateToNextTarget()
+                    break
                 }
                 else if (path.includes("/explore/tags/") || path.includes("/explore/search/")) {
                     await this.handleHashtagPage()
@@ -1542,33 +1547,65 @@ class InstagramBot {
             if (this.sessionLikes >= (this.delayConfig.sessionLikeLimit || 100)) {
                 // Like limit reached for today - skip like action but continue to follow/comment
             } else {
-                // Updated Like Selector
-                const heart = Array.from(container.querySelectorAll('svg')).find(s => {
+                let likeBtn: HTMLElement | null = null
+                let isAlreadyLiked = false
+
+                const allSvgs = Array.from(container.querySelectorAll('svg'))
+                for (const s of allSvgs) {
+                    const label = (s.getAttribute('aria-label') || '').toLowerCase()
+                    const title = (s.querySelector('title')?.textContent || '').toLowerCase()
+                    const parentLabel = (s.closest('button, div[role="button"]')?.getAttribute('aria-label') || '').toLowerCase()
+
+                    if (label === 'unlike' || label === 'ya no me gusta' || parentLabel === 'unlike' || parentLabel === 'ya no me gusta') {
+                        isAlreadyLiked = true
+                        break
+                    }
+
+                    if (label === 'like' || label === 'me gusta' || title === 'like' || title === 'me gusta' || parentLabel === 'like' || parentLabel === 'me gusta') {
+                        likeBtn = (s.closest('button') || s.closest('div[role="button"]') || s.parentElement) as HTMLElement
+                        break
+                    }
+
                     const h = s.innerHTML || ""
                     const p = s.querySelector('path')?.getAttribute('d') || ""
-                    const label = (s.getAttribute('aria-label') || "").toLowerCase()
-
-                    return h.includes('M16.792') || h.includes('M34.6') || h.includes('M47.5') ||
-                        p.includes('M47.5') || p.includes('M16.792') ||
-                        label === 'like' || label === 'me gusta'
-                })
-
-                if (heart) {
-                    const btn = heart.closest('button') || heart.parentElement as HTMLElement
-                    const isLiked = btn.querySelector('svg[fill="#ed4956"]') ||
-                        btn.querySelector('svg[color="#ed4956"]') ||
-                        (btn.querySelector('svg[aria-label]')?.getAttribute('aria-label') === 'Unlike') ||
-                        (btn.querySelector('svg[aria-label]')?.getAttribute('aria-label') === 'Ya no me gusta')
-
-                    if (!isLiked) {
-                        btn.click()
-                        this.stats.likes++
-                        this.sessionLikes++
-                        await storage.set(this.pKey("stats"), this.stats)
-                        await storage.set(this.pKey("sessionLikes"), this.sessionLikes)
-                        if (profileName) await this.recordInteraction(profileName, "like", profileUrl || window.location.href, "Automated Post Like")
-                        interacted = true
+                    if (h.includes('M16.792') || h.includes('M34.6') || h.includes('M47.5') || p.includes('M47.5') || p.includes('M16.792')) {
+                        const btn = (s.closest('button') || s.closest('div[role="button"]') || s.parentElement) as HTMLElement
+                        const isRed = btn?.querySelector('svg[fill="#ed4956"]') || btn?.querySelector('svg[color="#ed4956"]') || (s.getAttribute('fill') === '#ed4956') || (s.getAttribute('color') === '#ed4956')
+                        if (isRed) {
+                            isAlreadyLiked = true
+                        } else {
+                            likeBtn = btn
+                        }
+                        break
                     }
+                }
+
+                if (!likeBtn && !isAlreadyLiked) {
+                    const btnElements = Array.from(container.querySelectorAll('button, div[role="button"]')) as HTMLElement[]
+                    for (const b of btnElements) {
+                        const aria = (b.getAttribute('aria-label') || '').toLowerCase()
+                        if (aria === 'unlike' || aria === 'ya no me gusta') {
+                            isAlreadyLiked = true
+                            break
+                        }
+                        if (aria === 'like' || aria === 'me gusta') {
+                            likeBtn = b
+                            break
+                        }
+                    }
+                }
+
+                if (isAlreadyLiked) {
+                    this.addLog("ℹ️ Post ya tiene Like previo.", "info")
+                } else if (likeBtn) {
+                    likeBtn.click()
+                    this.stats.likes++
+                    this.sessionLikes++
+                    await storage.set(this.pKey("stats"), this.stats)
+                    await storage.set(this.pKey("sessionLikes"), this.sessionLikes)
+                    if (profileName) await this.recordInteraction(profileName, "like", profileUrl || window.location.href, "Automated Post Like")
+                    this.addLog(`❤️ Post Like exitoso${profileName ? ` a @${profileName}` : ''}`, "success")
+                    interacted = true
                 }
             }
         }
