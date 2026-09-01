@@ -1331,6 +1331,28 @@ class InstagramBot {
         window.location.href = `https://www.instagram.com/?${langParam}`
     }
 
+    private getVisibleProfileActionButtons(): HTMLElement[] {
+        const selectors = [
+            'header button',
+            'main header button',
+            'header div[role="button"]',
+            'main header div[role="button"]',
+            'section header button',
+            'section header div[role="button"]'
+        ]
+
+        return Array.from(document.querySelectorAll(selectors.join(', ')))
+            .filter((el) => (el as HTMLElement).offsetHeight > 0) as HTMLElement[]
+    }
+
+    private getButtonSignals(el: Element): { text: string; label: string; title: string } {
+        const node = el as HTMLElement
+        const text = node.innerText?.toLowerCase().trim() || ""
+        const label = node.getAttribute('aria-label')?.toLowerCase().trim() || ""
+        const title = node.querySelector('title')?.textContent?.toLowerCase().trim() || ""
+        return { text, label, title }
+    }
+
     async handleProfilePage(): Promise<string | void> {
         // Wait for hydration/rendering to avoid "infinite reload" panic
         await this.sleep(3500)
@@ -1341,33 +1363,11 @@ class InstagramBot {
         if (this.config.unfollowEnabled && isFollowedTarget) {
             this.addLog(`Processing Unfollow: @${user}...`, "info")
 
-            const getVisibleProfileActionButtons = () => {
-                const selectors = [
-                    'header button',
-                    'main header button',
-                    'header div[role="button"]',
-                    'main header div[role="button"]',
-                    'section header button',
-                    'section header div[role="button"]'
-                ]
-
-                return Array.from(document.querySelectorAll(selectors.join(', ')))
-                    .filter((el) => (el as HTMLElement).offsetHeight > 0) as HTMLElement[]
-            }
-
-            const getButtonSignals = (el: Element) => {
-                const node = el as HTMLElement
-                const text = node.innerText?.toLowerCase().trim() || ""
-                const label = node.getAttribute('aria-label')?.toLowerCase().trim() || ""
-                const title = node.querySelector('title')?.textContent?.toLowerCase().trim() || ""
-                return { text, label, title }
-            }
-
             const followingKeywords = ['following', 'siguiendo', 'requested', 'pendiente']
             const followKeywords = ['follow', 'seguir', 'follow back', 'seguir también', 'seguir tambien']
 
-            const interactionBtn = getVisibleProfileActionButtons().find((b) => {
-                const { text, label, title } = getButtonSignals(b)
+            const interactionBtn = this.getVisibleProfileActionButtons().find((b) => {
+                const { text, label, title } = this.getButtonSignals(b)
                 const combined = `${text} ${label} ${title}`
                 const isMessage = combined.includes('message') || combined.includes('mensaje') || combined.includes('contact')
                 const matchesText = followingKeywords.some(k => combined.includes(k))
@@ -1408,8 +1408,8 @@ class InstagramBot {
 
                 await this.sleep(confirmed ? 3000 : 1800)
 
-                const checkBtn = getVisibleProfileActionButtons().find((b) => {
-                    const { text, label, title } = getButtonSignals(b)
+                const checkBtn = this.getVisibleProfileActionButtons().find((b) => {
+                    const { text, label, title } = this.getButtonSignals(b)
                     const combined = `${text} ${label} ${title}`
                     return followKeywords.some(keyword => combined.includes(keyword))
                 })
@@ -1435,8 +1435,8 @@ class InstagramBot {
                     return "DONE"
                 }
             } else {
-                const isFollowBtn = getVisibleProfileActionButtons().some((b) => {
-                    const { text, label, title } = getButtonSignals(b)
+                const isFollowBtn = this.getVisibleProfileActionButtons().some((b) => {
+                    const { text, label, title } = this.getButtonSignals(b)
                     const combined = `${text} ${label} ${title}`
                     return followKeywords.some(keyword => combined.includes(keyword))
                 })
