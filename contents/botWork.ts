@@ -90,7 +90,7 @@ class InstagramBot {
             "lastSessionReport", "followerHistory", "sessionLikes",
             "sessionFollows", "sessionUnfollows", "processedHistory",
             "targetPostUrls", "commentTemplates", "healthMetrics", "sessionComments",
-            "sessionDayMarker", "postInteractions", "postTargetQueue"
+            "sessionDayMarker", "postInteractions", "postTargetQueue", "postAudienceQueue"
         ]
         if (accountSpecific.includes(key)) {
             return `${this.activeUsername}_${key}`
@@ -1124,13 +1124,22 @@ class InstagramBot {
                     }
                 }
                 else if (path.includes("/p/") || path.includes("/reels/")) {
-                    await this.handlePostInteraction()
-                    // When on a direct post page (not a modal), move to next target to prevent infinite loop
-                    this.addLog("Post interaction processed. Moving to next target...", "info")
-                    await storage.set("lastNavTime", 0)
-                    await this.sleep(3000)
-                    await this.navigateToNextTarget()
-                    break
+                    const targetPostUrls = await storage.get<string[]>(this.pKey("targetPostUrls")) || []
+                    const cleanTargetUrls = targetPostUrls.map(u => (u || '').split('?')[0].replace(/\/$/, "").toLowerCase()).filter(Boolean)
+                    const currentCleanUrl = window.location.href.split('?')[0].replace(/\/$/, "").toLowerCase()
+                    const isConfiguredTargetPost = cleanTargetUrls.some(u => currentCleanUrl.includes(u) || u.includes(currentCleanUrl))
+
+                    if (isConfiguredTargetPost || this.currentMission.includes("Scraping Post")) {
+                        await this.extractPostAudienceAndQueue()
+                        break
+                    } else {
+                        await this.handlePostInteraction()
+                        this.addLog("Post interaction processed. Moving to next target...", "info")
+                        await storage.set("lastNavTime", 0)
+                        await this.sleep(3000)
+                        await this.navigateToNextTarget()
+                        break
+                    }
                 }
                 else if (path.includes("/explore/tags/") || path.includes("/explore/search/")) {
                     await this.handleHashtagPage()
@@ -1173,6 +1182,22 @@ class InstagramBot {
     }
 
     async navigateToNextTarget() {
+        const langParam = "hl=en"
+
+        // 1. High-Priority: Check if we have queued audience users from a scraped post
+        const audienceQueue = await storage.get<string[]>(this.pKey("postAudienceQueue")) || []
+        const validQueue = audienceQueue.map(u => (u || '').trim()).filter(Boolean)
+
+        if (validQueue.length > 0) {
+            const nextUser = validQueue.shift()!
+            await storage.set(this.pKey("postAudienceQueue"), validQueue)
+            this.currentMission = `Audience @${nextUser}`
+            this.addLog(`🎯 Objetivo de Audiencia de Post: @${nextUser} (Restantes en cola: ${validQueue.length})`, "success")
+            await storage.set("lastNavTime", Date.now())
+            window.location.href = `https://www.instagram.com/${nextUser}/?${langParam}`
+            return
+        }
+
         const sources = []
         if (this.config.sourceHashtags) sources.push('hashtag')
         if (this.config.sourceCompetitors) sources.push('competitor')
@@ -1186,10 +1211,6 @@ class InstagramBot {
 
         // Strategy: Iterate over sources until navigation is possible
         const shuffled = sources.sort(() => Math.random() - 0.5)
-        const langParam = "hl=en"
-
-
-
 
         for (const choice of shuffled) {
             if (choice === 'hashtag') {
@@ -1227,9 +1248,10 @@ class InstagramBot {
                     this.addLog("Source 'Posts' enabled but list is empty.", "warning")
                     continue
                 }
-                const picked = clean[Math.floor(Math.random() * clean.length)]
-                this.currentMission = `Post Target`
-                this.addLog(`>>> Mission: Post URL`, "success")
+                const fresh = clean.filter(u => !this.processedHistory.includes(u.split('?')[0].replace(/\/$/, "").toLowerCase()))
+                const picked = fresh.length > 0 ? fresh[0] : clean[Math.floor(Math.random() * clean.length)]
+                this.currentMission = `Scraping Post Audience`
+                this.addLog(`>>> Mission: Extrayendo Audiencia del Post (${picked})`, "success")
                 await storage.set("lastNavTime", Date.now())
                 window.location.href = picked
                 return
@@ -1525,6 +1547,116 @@ class InstagramBot {
             }
             await this.sleep(4000)
         }
+    }
+
+    async extractPostAudienceAndQueue() {
+        this.addLog("🔍 Extrayendo audiencia (comentadores y likes) del post objetivo...", "info")
+        await this.sleep(3500)
+
+        const extractedUsers = new Set<string>()
+        const cleanUrl = window.location.href.split('?')[0].replace(/\/$/, "").toLowerCase()
+        const myUsername = (this.activeUsername || await storage.get<string>("lastKnownUsername") || "").toLowerCase().trim()
+
+        const isValidUsername = (u: string) => {
+            if (!u) return false
+            const clean = u.replace(/^@/, '').trim()
+            if (clean.length < 1 || clean.length > 30) return false
+            if (!/^[a-zA-Z0-9._]+$/.test(clean)) return false
+            const forbidden = new Set([
+                'explore', 'direct', 'reels', 'stories', 'accounts', 'p', 'tv', 'reel',
+                'about', 'legal', 'help', 'privacy', 'terms', 'instagram', 'meta', 'threads', 'support'
+            ])
+            return !forbidden.has(clean.toLowerCase()) && clean.toLowerCase() !== myUsername
+        }
+
+        // 1. Extract Commenters visible on the post page
+        const commentAuthorLinks = Array.from(
+            document.querySelectorAll('article ul li h2 a, article ul li h3 a, article ul li a[role="link"], article ul li a[href]')
+        ) as HTMLAnchorElement[]
+
+        for (const a of commentAuthorLinks) {
+            if (a.closest('nav, aside, div[role="navigation"], header[role="banner"]')) continue
+            const rawHref = a.getAttribute('href') || ''
+            const text = (a.textContent || '').trim()
+            const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+            if (parts.length === 1 && isValidUsername(parts[0])) {
+                extractedUsers.add(parts[0].toLowerCase())
+            } else if (isValidUsername(text)) {
+                extractedUsers.add(text.toLowerCase())
+            }
+        }
+
+        this.addLog(`💬 Comentadores detectados: ${extractedUsers.size}`, "info")
+
+        // 2. Try to open Likers Modal to extract users who liked the post
+        try {
+            const likeCountEl = Array.from(document.querySelectorAll('article a[href*="/liked_by/"], main a[href*="/liked_by/"], article section a[href*="/liked_by/"]')).find(Boolean) as HTMLElement
+                || Array.from(document.querySelectorAll('article section span, main section span, article section div[role="button"]')).find(el => {
+                    const t = (el.textContent || '').toLowerCase()
+                    return (t.includes('others') || t.includes('likes') || t.includes('me gusta') || t.includes('personas más')) && !el.closest('header')
+                }) as HTMLElement
+
+            if (likeCountEl) {
+                this.addLog("❤️ Abriendo lista de 'Me gusta' del post...", "info")
+                likeCountEl.click()
+                await this.sleep(3500)
+
+                // Search inside modal dialog
+                const likersDialog = document.querySelector('div[role="dialog"]')
+                if (likersDialog) {
+                    const likerLinks = Array.from(likersDialog.querySelectorAll('a[role="link"], a[href]')) as HTMLAnchorElement[]
+                    for (const a of likerLinks) {
+                        const rawHref = a.getAttribute('href') || ''
+                        const text = (a.textContent || '').trim()
+                        const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+                        if (parts.length === 1 && isValidUsername(parts[0])) {
+                            extractedUsers.add(parts[0].toLowerCase())
+                        } else if (isValidUsername(text)) {
+                            extractedUsers.add(text.toLowerCase())
+                        }
+                    }
+
+                    // Close likers modal
+                    const closeBtn = likersDialog.querySelector('svg[aria-label="Close"], svg[aria-label="Cerrar"]')?.closest('button')
+                    if (closeBtn) {
+                        (closeBtn as HTMLElement).click()
+                    } else {
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))
+                    }
+                    await this.sleep(1000)
+                }
+            }
+        } catch (e) {
+            console.log("Likers modal extraction skipped:", e)
+        }
+
+        // 3. Filter candidates against interaction history & previous follows
+        const interactedUsers = new Set((this.interactionHistory || []).map(r => (r.username || '').toLowerCase()))
+        const followedUsers = new Set((this.followedUsers || []).map(u => (u.username || '').toLowerCase()))
+
+        const qualifiedUsers = Array.from(extractedUsers).filter(u => {
+            return !interactedUsers.has(u) && !followedUsers.has(u) && u !== myUsername
+        })
+
+        await this.addToHistory(cleanUrl)
+
+        if (qualifiedUsers.length === 0) {
+            this.addLog("⚠️ No se encontraron nuevos usuarios para interactuar en este post. Pasando al siguiente...", "warning")
+            await storage.set("lastNavTime", 0)
+            await this.navigateToNextTarget()
+            return
+        }
+
+        // 4. Save to postAudienceQueue
+        const existingQueue = await storage.get<string[]>(this.pKey("postAudienceQueue")) || []
+        const mergedQueue = Array.from(new Set([...existingQueue, ...qualifiedUsers]))
+        await storage.set(this.pKey("postAudienceQueue"), mergedQueue)
+
+        this.addLog(`🎯 Audiencia extraída con éxito: ${qualifiedUsers.length} usuarios calificados en cola (Total en cola: ${mergedQueue.length}).`, "success")
+
+        // 5. Navigate to the first user in the queue immediately!
+        await storage.set("lastNavTime", 0)
+        await this.navigateToNextTarget()
     }
 
     async handlePostInteraction() {
