@@ -1535,13 +1535,28 @@ class InstagramBot {
         const container = dialog || document.querySelector('article') || document
 
         // 2. Find Profile Info
-        // Prefer anchors in header that actually have text (Username), ignoring empty avatars
-        const allLinks = Array.from(container.querySelectorAll('header a')) as HTMLAnchorElement[]
-        const profileLink = allLinks.find(a => a.innerText?.trim().length > 1)
-            || container.querySelector('div > a[href*="/"]') as HTMLAnchorElement
+        let profileName = ""
+        let profileUrl = ""
 
-        const profileName = profileLink?.textContent?.trim() || ""
-        const profileUrl = profileLink?.href?.split('?')[0].replace(/\/$/, "").toLowerCase() || ""
+        const postArticle = container.querySelector('article') || (container.tagName === 'ARTICLE' ? container : null)
+        const headerEl = postArticle?.querySelector('header') || container.querySelector('header')
+
+        const candidateLinks = Array.from(
+            (headerEl || postArticle || container).querySelectorAll('a[href]')
+        ) as HTMLAnchorElement[]
+
+        const excludedSlugs = new Set(['', 'explore', 'direct', 'reels', 'stories', 'accounts', 'p', 'about', 'legal', 'help', 'privacy', 'terms', 'instagram'])
+
+        for (const a of candidateLinks) {
+            const rawHref = a.getAttribute('href') || ''
+            const text = (a.textContent || '').trim()
+            const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+            if (parts.length === 1 && !excludedSlugs.has(parts[0].toLowerCase()) && text.length > 0 && text.toLowerCase() !== 'instagram') {
+                profileName = parts[0]
+                profileUrl = `https://www.instagram.com/${parts[0]}`
+                break
+            }
+        }
 
         if (this.config.likeEnabled) {
             if (this.sessionLikes >= (this.delayConfig.sessionLikeLimit || 100)) {
