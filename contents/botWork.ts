@@ -219,6 +219,7 @@ class InstagramBot {
         this.sessionComments = 0
         this.sessionEngagedProfiles.clear()
         this.capturedGraphQLData = []
+        void storage.remove(this.pKey("postAudienceQueue"))
     }
 
     private getSessionDayMarker() {
@@ -886,6 +887,7 @@ class InstagramBot {
         this.isInternalStop = false
         this.resetTransientSessionState()
         await storage.remove("botStartTime")
+        await storage.remove(this.pKey("postAudienceQueue"))
     }
 
     private async addToHistory(url: string) {
