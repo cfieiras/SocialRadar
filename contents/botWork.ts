@@ -1569,51 +1569,89 @@ class InstagramBot {
             return !forbidden.has(clean.toLowerCase()) && clean.toLowerCase() !== myUsername
         }
 
-        // 1. Extract Commenters visible on the post page
-        const commentAuthorLinks = Array.from(
-            document.querySelectorAll('article ul li h2 a, article ul li h3 a, article ul li a[role="link"], article ul li a[href]')
-        ) as HTMLAnchorElement[]
+        // 1. Extract Commenters (with auto-scroll and load more button)
+        this.addLog("💬 Leyendo y scroleando comentarios del post...", "info")
+        try {
+            // Click "View more comments" / "+" / "Ver más comentarios" button if present
+            const moreCommentsButtons = Array.from(document.querySelectorAll('article button, article div[role="button"], article span[role="button"]')).filter(el => {
+                const t = (el.textContent || '').toLowerCase()
+                return (t.includes('comment') || t.includes('comentario') || t.includes('ver más') || t.includes('view more') || t.includes('load more')) && !el.closest('header')
+            }) as HTMLElement[]
 
-        for (const a of commentAuthorLinks) {
-            if (a.closest('nav, aside, div[role="navigation"], header[role="banner"]')) continue
-            const rawHref = a.getAttribute('href') || ''
-            const text = (a.textContent || '').trim()
-            const parts = rawHref.split('?')[0].split('/').filter(Boolean)
-            if (parts.length === 1 && isValidUsername(parts[0])) {
-                extractedUsers.add(parts[0].toLowerCase())
-            } else if (isValidUsername(text)) {
-                extractedUsers.add(text.toLowerCase())
+            if (moreCommentsButtons.length > 0) {
+                try { moreCommentsButtons[0].click(); await this.sleep(2000) } catch (e) {}
             }
+
+            // Find comments scroll container or post article
+            const commentsContainer = document.querySelector('article ul, article div[style*="overflow-y: auto"], article div[style*="overflow"], main article') || document.querySelector('article')
+
+            // Scroll comments section 4 times to reveal lazy-loaded comments
+            for (let c = 0; c < 4; c++) {
+                const commentLinks = Array.from(
+                    document.querySelectorAll('article ul a[href], article a[role="link"], article div[style*="overflow"] a[href], article h2 a, article h3 a')
+                ) as HTMLAnchorElement[]
+
+                for (const a of commentLinks) {
+                    if (a.closest('nav, aside, div[role="navigation"], header[role="banner"]')) continue
+                    const rawHref = a.getAttribute('href') || ''
+                    const text = (a.textContent || '').trim()
+                    const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+                    if (parts.length === 1 && isValidUsername(parts[0])) {
+                        extractedUsers.add(parts[0].toLowerCase())
+                    } else if (isValidUsername(text)) {
+                        extractedUsers.add(text.toLowerCase())
+                    }
+                }
+
+                if (commentsContainer) {
+                    commentsContainer.scrollBy({ top: 800, behavior: 'smooth' })
+                }
+                await this.sleep(1200)
+            }
+        } catch (e) {
+            console.log("Comments scraping issue:", e)
         }
 
         this.addLog(`💬 Comentadores detectados: ${extractedUsers.size}`, "info")
 
-        // 2. Try to open Likers Modal to extract users who liked the post
+        // 2. Try to open Likers Modal and auto-scroll to extract active likers
         try {
             const likeCountEl = Array.from(document.querySelectorAll('article a[href*="/liked_by/"], main a[href*="/liked_by/"], article section a[href*="/liked_by/"]')).find(Boolean) as HTMLElement
-                || Array.from(document.querySelectorAll('article section span, main section span, article section div[role="button"]')).find(el => {
+                || Array.from(document.querySelectorAll('article section span, main section span, article section div[role="button"], article a[role="link"]')).find(el => {
                     const t = (el.textContent || '').toLowerCase()
-                    return (t.includes('others') || t.includes('likes') || t.includes('me gusta') || t.includes('personas más')) && !el.closest('header')
+                    return (t.includes('others') || t.includes('likes') || t.includes('me gusta') || t.includes('personas más') || t.includes('les gusta')) && !el.closest('header')
                 }) as HTMLElement
 
             if (likeCountEl) {
-                this.addLog("❤️ Abriendo lista de 'Me gusta' del post...", "info")
+                this.addLog("❤️ Abriendo lista de 'Me gusta' y scroleando...", "info")
                 likeCountEl.click()
-                await this.sleep(3500)
+                await this.sleep(3000)
 
                 // Search inside modal dialog
                 const likersDialog = document.querySelector('div[role="dialog"]')
                 if (likersDialog) {
-                    const likerLinks = Array.from(likersDialog.querySelectorAll('a[role="link"], a[href]')) as HTMLAnchorElement[]
-                    for (const a of likerLinks) {
-                        const rawHref = a.getAttribute('href') || ''
-                        const text = (a.textContent || '').trim()
-                        const parts = rawHref.split('?')[0].split('/').filter(Boolean)
-                        if (parts.length === 1 && isValidUsername(parts[0])) {
-                            extractedUsers.add(parts[0].toLowerCase())
-                        } else if (isValidUsername(text)) {
-                            extractedUsers.add(text.toLowerCase())
+                    const modalScroller = likersDialog.querySelector('div[style*="overflow-y: auto"], div._aano, div[style*="overflow"]')
+                        || likersDialog.querySelector('div > div > div:nth-child(2)')
+                        || likersDialog
+
+                    // Scroll down 8 times to load many likers from the modal
+                    for (let s = 0; s < 8; s++) {
+                        const likerLinks = Array.from(likersDialog.querySelectorAll('a[role="link"], a[href]')) as HTMLAnchorElement[]
+                        for (const a of likerLinks) {
+                            const rawHref = a.getAttribute('href') || ''
+                            const text = (a.textContent || '').trim()
+                            const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+                            if (parts.length === 1 && isValidUsername(parts[0])) {
+                                extractedUsers.add(parts[0].toLowerCase())
+                            } else if (isValidUsername(text)) {
+                                extractedUsers.add(text.toLowerCase())
+                            }
                         }
+
+                        if (modalScroller) {
+                            modalScroller.scrollBy({ top: 800, behavior: 'smooth' })
+                        }
+                        await this.sleep(1200)
                     }
 
                     // Close likers modal
