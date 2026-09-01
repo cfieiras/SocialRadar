@@ -1532,7 +1532,8 @@ class InstagramBot {
 
         // 1. Identify context (Modal vs Page)
         const dialog = document.querySelector('div[role="dialog"]')
-        const container = dialog || document.querySelector('article') || document
+        const postArticle = dialog?.querySelector('article') || document.querySelector('main article') || document.querySelector('article') || dialog || document.querySelector('main') || document
+        const container = postArticle
 
         // 2. Find Profile Info
         let profileName = ""
@@ -1550,13 +1551,60 @@ class InstagramBot {
             return !forbidden.has(clean.toLowerCase())
         }
 
-        const postArticle = container.querySelector('article') || (container.tagName === 'ARTICLE' ? container : null)
-        const headerEl = postArticle?.querySelector('header') || container.querySelector('header')
+        // Method A: Extract from page meta tags / document title (most reliable for direct post pages)
+        const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') || ''
+        const docTitle = document.title || ''
+        const titleSources = [ogTitle, docTitle]
 
-        // First try to look inside post header for the author username
-        if (headerEl) {
-            const headerLinks = Array.from(headerEl.querySelectorAll('a[href]')) as HTMLAnchorElement[]
-            for (const a of headerLinks) {
+        for (const t of titleSources) {
+            if (!t) continue
+            // Matches "Name (@username) on Instagram" or "username on Instagram"
+            const matchParen = t.match(/\(@([a-zA-Z0-9._]+)\)/)
+            if (matchParen && isValidUsername(matchParen[1])) {
+                profileName = matchParen[1]
+                profileUrl = `https://www.instagram.com/${matchParen[1]}`
+                break
+            }
+            const matchOnIg = t.match(/^([a-zA-Z0-9._]+)\s+on Instagram/i)
+            if (matchOnIg && isValidUsername(matchOnIg[1])) {
+                profileName = matchOnIg[1]
+                profileUrl = `https://www.instagram.com/${matchOnIg[1]}`
+                break
+            }
+        }
+
+        // Method B: Search post header inside article or dialog (excluding any navigation or sidebar)
+        if (!profileName) {
+            const headerEl = container.querySelector('header')
+            if (headerEl) {
+                const headerLinks = Array.from(headerEl.querySelectorAll('a[href]')) as HTMLAnchorElement[]
+                for (const a of headerLinks) {
+                    if (a.closest('nav, aside, div[role="navigation"], header[role="banner"]')) continue
+                    const rawHref = a.getAttribute('href') || ''
+                    const text = (a.textContent || '').trim()
+                    const parts = rawHref.split('?')[0].split('/').filter(Boolean)
+                    if (parts.length === 1 && isValidUsername(parts[0])) {
+                        profileName = parts[0]
+                        profileUrl = `https://www.instagram.com/${parts[0]}`
+                        break
+                    }
+                    if (isValidUsername(text)) {
+                        profileName = text
+                        profileUrl = `https://www.instagram.com/${text}`
+                        break
+                    }
+                }
+            }
+        }
+
+        // Method C: Search post caption / title links inside container
+        if (!profileName) {
+            const candidateLinks = Array.from(
+                container.querySelectorAll('h2 a[href], h3 a[href], article > div a[href]')
+            ) as HTMLAnchorElement[]
+
+            for (const a of candidateLinks) {
+                if (a.closest('nav, aside, div[role="navigation"], header[role="banner"]')) continue
                 const rawHref = a.getAttribute('href') || ''
                 const text = (a.textContent || '').trim()
                 const parts = rawHref.split('?')[0].split('/').filter(Boolean)
@@ -1565,30 +1613,14 @@ class InstagramBot {
                     profileUrl = `https://www.instagram.com/${parts[0]}`
                     break
                 }
-                if (isValidUsername(text)) {
-                    profileName = text
-                    profileUrl = `https://www.instagram.com/${text}`
-                    break
-                }
             }
         }
 
-        // Fallback: search inside article or container for valid username link
-        if (!profileName) {
-            const candidateLinks = Array.from(
-                (postArticle || container).querySelectorAll('a[href]')
-            ) as HTMLAnchorElement[]
-
-            for (const a of candidateLinks) {
-                const rawHref = a.getAttribute('href') || ''
-                const text = (a.textContent || '').trim()
-                const parts = rawHref.split('?')[0].split('/').filter(Boolean)
-                if (parts.length === 1 && isValidUsername(parts[0]) && isValidUsername(text)) {
-                    profileName = parts[0]
-                    profileUrl = `https://www.instagram.com/${parts[0]}`
-                    break
-                }
-            }
+        // Anti-Self Interaction Guard: Check if the post belongs to the logged-in user
+        const myUsername = (this.activeUsername || await storage.get<string>("lastKnownUsername") || "").toLowerCase().trim()
+        if (profileName && myUsername && profileName.toLowerCase() === myUsername) {
+            this.addLog(`⚠️ Publicación de tu propia cuenta (@${profileName}). Omitiendo para no auto-interactuar.`, "info")
+            return
         }
 
         if (this.config.likeEnabled) {
