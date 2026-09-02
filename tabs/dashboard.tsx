@@ -190,6 +190,127 @@ function Dashboard() {
     const currentUsername = (selectedProfileUsername || activeDetectedUser || (availableAccounts.length > 0 ? availableAccounts[0] : "global")).toLowerCase()
     const competitorsDataKey = `${currentUsername}_competitorsData`
 
+    const AccountContextSwitcher = ({ 
+        title = "Cuenta Activa",
+        subtitle = "Selecciona el perfil para visualizar y ajustar sus datos.",
+        compact = false,
+        className = ""
+    }: { 
+        title?: string
+        subtitle?: string
+        compact?: boolean
+        className?: string 
+    }) => {
+        if (availableAccounts.length === 0) return null
+
+        if (compact) {
+            return (
+                <div className={`flex items-center gap-1.5 p-1 rounded-2xl bg-slate-900/90 border border-slate-800/80 shadow-inner backdrop-blur-md ${className}`}>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 px-2 py-1 flex items-center gap-1">
+                        <Users className="w-3 h-3 text-primary-400" />
+                        Perfil:
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        {availableAccounts.map((acc) => {
+                            const isSelected = currentUsername === acc
+                            const isActiveSession = activeDetectedUser === acc
+
+                            return (
+                                <button
+                                    key={acc}
+                                    type="button"
+                                    onClick={() => setSelectedProfileUsername(acc)}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition-all duration-200 cursor-pointer ${
+                                        isSelected
+                                            ? "bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-md shadow-primary-500/20 border border-primary-400/40"
+                                            : "bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/50"
+                                    }`}
+                                    title={isActiveSession ? "Sesión activa actualmente en Instagram" : `Ver configuración de @${acc}`}
+                                >
+                                    <span className={`w-2 h-2 rounded-full ${isActiveSession ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`} />
+                                    <span>@{acc}</span>
+                                    {isActiveSession && (
+                                        <span className="text-[8px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-tighter">
+                                            En sesión
+                                        </span>
+                                    )}
+                                </button>
+                            )
+                        })}
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab("multiaccount")}
+                            className="flex items-center gap-1 px-2 py-1 rounded-xl font-bold text-xs text-slate-400 hover:text-white bg-slate-800/40 hover:bg-slate-800 border border-dashed border-slate-700 hover:border-slate-500 transition-all cursor-pointer"
+                            title="Gestionar o agregar más cuentas"
+                        >
+                            <UserPlus className="w-3 h-3" />
+                        </button>
+                    </div>
+                </div>
+            )
+        }
+
+        return (
+            <div className={`bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 backdrop-blur-xl ${className}`}>
+                <div className="flex items-center gap-3.5">
+                    <div className="w-10 h-10 rounded-xl bg-primary-500/10 border border-primary-500/20 flex items-center justify-center text-primary-400 shrink-0">
+                        <Users className="w-5 h-5" />
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-black text-white uppercase tracking-wider">{title}</h4>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-500/10 text-primary-300 border border-primary-500/20 font-bold">
+                                {availableAccounts.length} {availableAccounts.length === 1 ? "cuenta" : "cuentas"}
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-400 font-medium mt-0.5">{subtitle}</p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                    {availableAccounts.map((acc) => {
+                        const isSelected = currentUsername === acc
+                        const isActiveSession = activeDetectedUser === acc
+
+                        return (
+                            <button
+                                key={acc}
+                                type="button"
+                                onClick={() => setSelectedProfileUsername(acc)}
+                                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs transition-all duration-200 cursor-pointer ${
+                                    isSelected
+                                        ? "bg-gradient-to-r from-primary-600 to-indigo-600 text-white shadow-lg shadow-primary-500/25 border border-primary-400/50 ring-2 ring-primary-500/20"
+                                        : "bg-slate-950/70 hover:bg-slate-800/80 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700"
+                                }`}
+                                title={isActiveSession ? "Sesión activa actualmente en Instagram" : `Ver configuración de @${acc}`}
+                            >
+                                <span className={`w-2 h-2 rounded-full ${isActiveSession ? "bg-emerald-400 shadow-sm shadow-emerald-400/80 animate-pulse" : "bg-slate-600"}`} />
+                                <span className="font-outfit">@{acc}</span>
+                                {isActiveSession ? (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase tracking-wider font-extrabold">
+                                        En sesión
+                                    </span>
+                                ) : isSelected && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-white/20 text-white border border-white/20 uppercase tracking-wider font-extrabold">
+                                        Editando
+                                    </span>
+                                )}
+                            </button>
+                        )
+                    })}
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("multiaccount")}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs text-slate-400 hover:text-white bg-slate-900/60 hover:bg-slate-800 border border-dashed border-slate-700 hover:border-slate-500 transition-all cursor-pointer"
+                        title="Gestionar o agregar cuentas en Multi-Account"
+                    >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>Gestionar Cuentas</span>
+                    </button>
+                </div>
+            </div>
+        )
+    }
+
     const [accountUserStats, setAccountUserStats] = useStorage<any>({ key: `${currentUsername}_currentUserStats`, instance: storage }, null)
     const userStats = accountUserStats || globalUserStats
 
@@ -1080,7 +1201,9 @@ function Dashboard() {
                         </h2>
                         <p className="text-sm text-slate-500 font-medium">Real-time modular bot configuration.</p>
                     </div>
-                    <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-4">
+                        <AccountContextSwitcher compact className="hidden xl:flex" />
+
                         <button
                             onClick={handleReloadInstagramAccount}
                             className="h-12 px-6 rounded-2xl font-black text-xs tracking-widest uppercase transition-all duration-300 flex items-center gap-2 bg-slate-900 text-slate-300 border border-slate-700 hover:bg-slate-800 hover:text-white"
@@ -1186,6 +1309,13 @@ function Dashboard() {
 
                         return (
                             <>
+                                {/* Account Context Switcher Banner */}
+                                <AccountContextSwitcher 
+                                    title="Métricas y Perfil por Cuenta" 
+                                    subtitle="Monitoreando estadísticas, engagement y actividad del perfil seleccionado." 
+                                    className="mb-8" 
+                                />
+
                                 {/* Profile Hero Command Center Header */}
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 flex items-center justify-between gap-8 animate-in fade-in slide-in-from-top-4 duration-500">
                                     <div className="flex items-center gap-6">
@@ -1916,31 +2046,10 @@ function Dashboard() {
                     {activeTab === "targeting" && (
                         <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
                             {/* Per-Account Strategy Selector Banner */}
-                            {availableAccounts.length > 0 && (
-                                <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4 backdrop-blur-xl">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                                            <Users className="w-5 h-5" />
-                                        </div>
-                                        <div>
-                                            <h4 className="text-sm font-bold text-white uppercase tracking-wider">Account Strategy Profile</h4>
-                                            <p className="text-xs text-slate-400 font-medium">Select an Instagram profile to configure its independent strategy and targets.</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-xs font-bold text-slate-400">Editing Strategy For:</span>
-                                        <select
-                                            value={currentUsername}
-                                            onChange={(e) => setSelectedProfileUsername(e.target.value)}
-                                            className="bg-slate-950 text-amber-400 font-bold text-sm px-4 py-2.5 rounded-xl border border-amber-500/40 focus:outline-none focus:border-amber-400 cursor-pointer shadow-lg shadow-amber-500/5"
-                                        >
-                                            {availableAccounts.map(acc => (
-                                                <option key={acc} value={acc}>@{acc}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                </div>
-                            )}
+                            <AccountContextSwitcher 
+                                title="Estrategia y Fuentes por Cuenta" 
+                                subtitle="Configura los hashtags, competidores y posts objetivos de este perfil de forma independiente." 
+                            />
 
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
@@ -2314,6 +2423,12 @@ function Dashboard() {
 
                     {activeTab === "settings" && (
                         <div className="space-y-12 pb-24 max-w-6xl">
+                            {/* Account Context Switcher Banner */}
+                            <AccountContextSwitcher 
+                                title="Configuración y Límites por Cuenta" 
+                                subtitle="Ajusta los límites diarios de likes, follows, comentarios y tiempos de espera para este perfil." 
+                            />
+
                             {/* Overlay & Maintenance Section */}
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-indigo-500/30 transition-all group">
@@ -2681,6 +2796,12 @@ function Dashboard() {
 
                     {activeTab === "history" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                            {/* Account Context Switcher Banner */}
+                            <AccountContextSwitcher 
+                                title="Historial por Cuenta" 
+                                subtitle="Registro de acciones e interacciones realizadas exclusivamente por este perfil." 
+                            />
+
                             {/* Header Banner */}
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 p-8 rounded-3xl bg-slate-900/60 border border-slate-800 backdrop-blur-xl relative overflow-hidden">
                                 <div className="absolute top-0 right-0 w-96 h-96 bg-primary-600/10 rounded-full blur-3xl pointer-events-none" />
@@ -2919,6 +3040,12 @@ function Dashboard() {
 
                     {activeTab === "database" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                            {/* Account Context Switcher Banner */}
+                            <AccountContextSwitcher 
+                                title="Base de Datos de Audiencia por Cuenta" 
+                                subtitle="Gestiona los usuarios seguidos, prospectados y elegibles para unfollow de este perfil." 
+                            />
+
                             <div className="flex items-center justify-between mb-10">
                                 <div className="flex items-center gap-4">
                                     <div className="p-4 bg-primary-500/20 rounded-2xl text-primary-400">
