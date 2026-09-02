@@ -1208,7 +1208,7 @@ function Dashboard() {
                         <p className="text-sm text-slate-500 font-medium">Real-time modular bot configuration.</p>
                     </div>
                     <div className="flex items-center gap-4">
-                        <AccountContextSwitcher compact className="hidden xl:flex" />
+                        <AccountContextSwitcher compact className="flex" />
 
                         <button
                             onClick={handleReloadInstagramAccount}
@@ -1315,13 +1315,6 @@ function Dashboard() {
 
                         return (
                             <>
-                                {/* Account Context Switcher Banner */}
-                                <AccountContextSwitcher 
-                                    title="Métricas y Perfil por Cuenta" 
-                                    subtitle="Monitoreando estadísticas, engagement y actividad del perfil seleccionado." 
-                                    className="mb-8" 
-                                />
-
                                 {/* Profile Hero Command Center Header */}
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10 flex items-center justify-between gap-8 animate-in fade-in slide-in-from-top-4 duration-500">
                                     <div className="flex items-center gap-6">
@@ -1978,12 +1971,6 @@ function Dashboard() {
 
                     {activeTab === "unfollow" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            {/* Account Context Switcher Banner */}
-                            <AccountContextSwitcher 
-                                title="Unfollow Tracker por Cuenta" 
-                                subtitle="Monitorea las pérdidas de seguidores y quién dejó de seguir a este perfil." 
-                            />
-
                             <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
                                 <div className="flex items-center justify-between mb-8">
                                     <div>
@@ -2057,12 +2044,6 @@ function Dashboard() {
 
                     {activeTab === "targeting" && (
                         <div className="space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
-                            {/* Per-Account Strategy Selector Banner */}
-                            <AccountContextSwitcher 
-                                title="Estrategia y Fuentes por Cuenta" 
-                                subtitle="Configura los hashtags, competidores y posts objetivos de este perfil de forma independiente." 
-                            />
-
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
                                     <h3 className="text-lg font-black tracking-tight mb-8 uppercase text-slate-400 tracking-[0.2em]">Active Action Modules</h3>
@@ -2435,12 +2416,6 @@ function Dashboard() {
 
                     {activeTab === "settings" && (
                         <div className="space-y-12 pb-24 max-w-6xl">
-                            {/* Account Context Switcher Banner */}
-                            <AccountContextSwitcher 
-                                title="Configuración y Límites por Cuenta" 
-                                subtitle="Ajusta los límites diarios de likes, follows, comentarios y tiempos de espera para este perfil." 
-                            />
-
                             {/* Overlay & Maintenance Section */}
                             <div className="grid grid-cols-2 gap-8">
                                 <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2rem] p-10 hover:border-indigo-500/30 transition-all group">
@@ -2808,12 +2783,6 @@ function Dashboard() {
 
                     {activeTab === "history" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
-                            {/* Account Context Switcher Banner */}
-                            <AccountContextSwitcher 
-                                title="Historial por Cuenta" 
-                                subtitle="Registro de acciones e interacciones realizadas exclusivamente por este perfil." 
-                            />
-
                             {/* Header Banner */}
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 p-8 rounded-3xl bg-slate-900/60 border border-slate-800 backdrop-blur-xl relative overflow-hidden">
                                 <div className="absolute top-0 right-0 w-96 h-96 bg-primary-600/10 rounded-full blur-3xl pointer-events-none" />
@@ -3052,12 +3021,6 @@ function Dashboard() {
 
                     {activeTab === "database" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
-                            {/* Account Context Switcher Banner */}
-                            <AccountContextSwitcher 
-                                title="Base de Datos de Audiencia por Cuenta" 
-                                subtitle="Gestiona los usuarios seguidos, prospectados y elegibles para unfollow de este perfil." 
-                            />
-
                             <div className="flex items-center justify-between mb-10">
                                 <div className="flex items-center gap-4">
                                     <div className="p-4 bg-primary-500/20 rounded-2xl text-primary-400">
