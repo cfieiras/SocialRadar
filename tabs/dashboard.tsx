@@ -448,7 +448,7 @@ function Dashboard() {
     }
 
     const loadUnfollowers = async (username?: string) => {
-        const targetUsername = username || userStats?.username
+        const targetUsername = username || currentUsername || userStats?.username
         if (!targetUsername) return
         const { data: { session } } = await supabase.auth.getSession()
         if (!session) return
@@ -463,6 +463,12 @@ function Dashboard() {
         if (data) setUnfollowers(data)
         else setUnfollowers([])
     }
+
+    useEffect(() => {
+        if (activeTab === "unfollow" && currentUsername) {
+            loadUnfollowers(currentUsername)
+        }
+    }, [activeTab, currentUsername])
 
     const handleDeepScan = async () => {
         if (isScanning) return
@@ -1972,6 +1978,12 @@ function Dashboard() {
 
                     {activeTab === "unfollow" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            {/* Account Context Switcher Banner */}
+                            <AccountContextSwitcher 
+                                title="Unfollow Tracker por Cuenta" 
+                                subtitle="Monitorea las pérdidas de seguidores y quién dejó de seguir a este perfil." 
+                            />
+
                             <div className="bg-slate-900/40 border border-slate-800/50 rounded-[2.5rem] p-10">
                                 <div className="flex items-center justify-between mb-8">
                                     <div>
