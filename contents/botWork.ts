@@ -1064,9 +1064,10 @@ class InstagramBot {
                 const lastAudit = userStats?.timestamp || 0
                 const today = new Date().toDateString()
                 const lastAuditDate = new Date(lastAudit).toDateString()
+                const lastDailyAuditAttempt = await storage.get<string>("lastDailyAuditAttempt")
 
-                // If never scanned, OR not scanned today
-                if (!lastAudit || lastAuditDate !== today) {
+                // If never scanned, OR not scanned today, and not already attempted today
+                if ((!lastAudit || lastAuditDate !== today) && lastDailyAuditAttempt !== today) {
                     // Check if we are ALREADY in the deep audit mode url to avoid loop re-triggering
                     const isProcessing = url.includes("mode=deep")
 
@@ -1074,6 +1075,7 @@ class InstagramBot {
                         const myUsername = userStats?.username || await storage.get<string>("lastKnownUsername")
                         if (myUsername) {
                             this.addLog("🛠️ Priority Maintenance: Daily Deep Audit required...", "wait")
+                            await storage.set("lastDailyAuditAttempt", today)
                             await storage.set("lastNavTime", Date.now())
                             window.location.href = `https://www.instagram.com/${myUsername}/?mode=deep`
                             return // Break loop to navigate
@@ -1369,6 +1371,18 @@ class InstagramBot {
         await this.sleep(3500)
 
         const user = window.location.pathname.replace(/\//g, "").toLowerCase()
+        const myUsername = (this.activeUsername || await storage.get<string>("lastKnownUsername") || "").toLowerCase().trim()
+
+        // Own Profile Guard: Never prospect, follow or like own profile posts
+        if (user && myUsername && user === myUsername) {
+            const isDeepMode = window.location.search.includes("mode=deep")
+            if (isDeepMode) {
+                await this.sleep(3000)
+            }
+            await this.navigateToNextTarget()
+            return "DONE"
+        }
+
         const targetEntry = this.followedUsers.find(u => u.username.toLowerCase() === user && !u.protected)
         const now = Date.now()
         const threshold = (this.delayConfig.unfollowDays || 3) * 86400 * 1000
