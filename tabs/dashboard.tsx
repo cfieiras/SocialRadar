@@ -1831,7 +1831,7 @@ function Dashboard() {
                                                         {/* Post Image Thumbnail */}
                                                         <div className="relative h-44 w-full bg-slate-950 overflow-hidden">
                                                             <img
-                                                                src={post.url}
+                                                                src={post.displayUrl || post.url}
                                                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                                                                 alt={`Post de @${post.username}`}
                                                                 onError={(e) => {
@@ -1847,7 +1847,7 @@ function Dashboard() {
                                                                     🔥 {post.viralScore}x Avg
                                                                 </span>
                                                                 <a
-                                                                    href={post.url}
+                                                                    href={post.postUrl || (post.shortcode ? `https://www.instagram.com/p/${post.shortcode}/` : post.url)}
                                                                     target="_blank"
                                                                     rel="noreferrer"
                                                                     className="p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-900 text-white backdrop-blur-md border border-slate-700 transition-colors"
@@ -1875,12 +1875,13 @@ function Dashboard() {
                                                     <div className="p-6 pt-0">
                                                         <button
                                                             onClick={async () => {
+                                                                const postDestination = post.postUrl || (post.shortcode ? `https://www.instagram.com/p/${post.shortcode}/` : post.url)
                                                                 const currentUrls = targetPosts || []
-                                                                if (!currentUrls.includes(post.url)) {
-                                                                    const updated = [...currentUrls, post.url]
+                                                                if (!currentUrls.includes(postDestination)) {
+                                                                    const updated = [...currentUrls, postDestination]
                                                                     setTargetPosts(updated)
                                                                     setConfig({ ...config, sourcePosts: true })
-                                                                    alert(`✅ Post de @${post.username} agregado a los objetivos del bot!`)
+                                                                    alert(`✅ Post de @${post.username} agregado a los objetivos del bot!\n${postDestination}`)
                                                                 } else {
                                                                     alert(`ℹ️ El post ya está en la lista de objetivos.`)
                                                                 }

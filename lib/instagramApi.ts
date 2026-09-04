@@ -1216,6 +1216,8 @@ export async function runDeepScan(onProgress?: (count: number) => void) {
 export interface ViralPostItem {
     id: string
     url: string
+    postUrl: string
+    displayUrl: string
     shortcode: string
     likes: number
     comments: number
@@ -1253,10 +1255,32 @@ export function extractTopViralPosts(competitorDataList: any[] = []): ViralPostI
                 format = "carousel"
             }
 
+            // Extract shortcode cleanly
+            let code = (p.shortcode || p.code || "").trim()
+            if (!code && p.id && !p.id.includes('_') && !/^\d{10,}$/.test(p.id)) {
+                code = p.id.trim()
+            }
+
+            // Determine canonical Instagram post URL vs Image display URL
+            let postUrl = ""
+            const rawDisplayUrl = sanitizeImageUrl(p.display_url || p.thumbnail_src || (p.url && !p.url.includes("instagram.com/p/") && !p.url.includes("instagram.com/reel/") ? p.url : ""))
+
+            if (p.url && (p.url.includes("instagram.com/p/") || p.url.includes("instagram.com/reel/"))) {
+                postUrl = p.url
+            } else if (code) {
+                postUrl = `https://www.instagram.com/p/${code}/`
+            } else if (p.id) {
+                postUrl = `https://www.instagram.com/p/${p.id}/`
+            } else {
+                postUrl = `https://www.instagram.com/${comp.username}/`
+            }
+
             allPosts.push({
-                id: p.id || p.shortcode || `${comp.username}_${pLikes}_${pComments}`,
-                url: p.url || `https://www.instagram.com/p/${p.shortcode}/`,
-                shortcode: p.shortcode || "",
+                id: p.id || code || `${comp.username}_${pLikes}_${pComments}`,
+                url: postUrl,
+                postUrl: postUrl,
+                displayUrl: rawDisplayUrl || `https://ui-avatars.com/api/?name=${comp.username}&background=0f172a&color=fff`,
+                shortcode: code,
                 likes: pLikes,
                 comments: pComments,
                 timestamp: p.timestamp || Date.now(),
