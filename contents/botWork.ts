@@ -246,11 +246,15 @@ class InstagramBot {
 
     private async ensureDailySessionBoundary() {
         const today = this.getSessionDayMarker()
-        if (!this.sessionDayMarker) {
-            this.sessionDayMarker = (await storage.get<string>(this.pKey("sessionDayMarker"))) || today
-        }
-        if (this.sessionDayMarker !== today) {
-            await this.resetDailySessionCounters("New day detected. Daily limits and session report reset.")
+        const storedMarker = await storage.get<string>(this.pKey("sessionDayMarker"))
+        if (!storedMarker || storedMarker !== today) {
+            await this.resetDailySessionCounters(`🌅 Nuevo día detectado (${today}). Contadores de límites diarios reiniciados a cero.`)
+        } else {
+            this.sessionDayMarker = today
+            this.sessionLikes = (await storage.get<number>(this.pKey("sessionLikes"))) || 0
+            this.sessionFollows = (await storage.get<number>(this.pKey("sessionFollows"))) || 0
+            this.sessionUnfollows = (await storage.get<number>(this.pKey("sessionUnfollows"))) || 0
+            this.sessionComments = (await storage.get<number>(this.pKey("sessionComments"))) || 0
         }
     }
 
@@ -801,7 +805,7 @@ class InstagramBot {
         }
 
         this.processedHistory = await storage.get<string[]>(this.pKey("processedHistory")) || []
-        this.resetTransientSessionState()
+        await this.ensureDailySessionBoundary()
 
         if (this.active) {
             this.removeStatusOverlay()
@@ -856,17 +860,13 @@ class InstagramBot {
         await storage.set("botStartTime", now)
 
         const today = this.getSessionDayMarker()
-        if (!this.sessionDayMarker || this.sessionDayMarker !== today) {
-            this.resetTransientSessionState()
-            this.sessionDayMarker = today
+        await this.ensureDailySessionBoundary()
 
-            await storage.set(this.pKey("sessionLikes"), 0)
-            await storage.set(this.pKey("sessionFollows"), 0)
-            await storage.set(this.pKey("sessionUnfollows"), 0)
-            await storage.set(this.pKey("sessionComments"), 0)
-            await storage.set(this.pKey("sessionDayMarker"), this.sessionDayMarker)
+        const totalActionsToday = this.sessionLikes + this.sessionFollows + this.sessionUnfollows + this.sessionComments
+        if (totalActionsToday > 0) {
+            this.addLog(`▶️ Reanudando sesión del día (${today}). Progreso -> Likes: ${this.sessionLikes}/${this.delayConfig.sessionLikeLimit || 100}, Follows: ${this.sessionFollows}/${this.delayConfig.sessionFollowLimit || 100}, Comments: ${this.sessionComments}/${this.delayConfig.sessionCommentLimit || 25}`, "info")
         } else {
-            this.addLog(`Reanudando sesión del día (${today}). Progreso -> Likes: ${this.sessionLikes}/${this.delayConfig.sessionLikeLimit || 100}, Follows: ${this.sessionFollows}/${this.delayConfig.sessionFollowLimit || 100}, Comments: ${this.sessionComments}/${this.delayConfig.sessionCommentLimit || 25}`, "info")
+            this.addLog(`🚀 Nueva sesión iniciada para hoy (${today}). Límites diarios -> Likes: 0/${this.delayConfig.sessionLikeLimit || 100}, Follows: 0/${this.delayConfig.sessionFollowLimit || 100}, Comments: 0/${this.delayConfig.sessionCommentLimit || 25}`, "info")
         }
 
         this.removeStatusOverlay()
