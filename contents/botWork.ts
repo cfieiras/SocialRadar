@@ -1491,12 +1491,20 @@ class InstagramBot {
         // Prospecting logic
         const comps = await storage.get<string[]>(this.pKey("targetCompetitors")) || []
         const isCompetitor = comps.some(c => c.replace("@", "").toLowerCase() === user)
+        const isAudienceMission = (this.currentMission || '').toLowerCase().includes('audience')
 
-        if (isCompetitor) {
+        if (this.config.sourceCompetitors && isCompetitor && !isAudienceMission) {
             this.addLog(`At Competitor Profile: @${user}`, "info")
             const flwLink = Array.from(document.querySelectorAll('a')).find(a => a.href.includes('/followers/'))
-            if (flwLink) { flwLink.click(); await this.sleep(5000) }
-            return
+            if (flwLink) { 
+                flwLink.click()
+                await this.sleep(4000)
+                return
+            } else {
+                this.addLog(`Could not find followers link on competitor @${user}. Moving to next target...`, "warning")
+                await this.navigateToNextTarget()
+                return "DONE"
+            }
         }
 
         const cleanUrl = window.location.href.split('?')[0].replace(/\/$/, "").toLowerCase()
@@ -1504,7 +1512,7 @@ class InstagramBot {
 
         if (sessionDone) {
             await this.navigateToNextTarget()
-            return
+            return "DONE"
         }
 
         await this.addToHistory(cleanUrl)
@@ -1546,16 +1554,19 @@ class InstagramBot {
         const canComment = this.config.dmEnabled && this.sessionComments < commentLimit
 
         if (canLike || canComment) {
-            const post = document.querySelector('article a[href*="/p/"], main a[href*="/p/"]') as HTMLElement
+            const post = document.querySelector('article a[href*="/p/"], main a[href*="/p/"], a[href*="/p/"], a[href*="/reel/"]') as HTMLElement
             if (post) {
                 this.addLog(`Opening latest post for @${user}...`, "info")
                 post.click()
                 await this.sleep(4000)
                 return
+            } else {
+                this.addLog(`No posts found for @${user}. Moving to next target...`, "info")
             }
         }
 
         await this.navigateToNextTarget()
+        return "DONE"
     }
 
     async handleHashtagPage() {
